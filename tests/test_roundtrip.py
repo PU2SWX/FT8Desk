@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from ft8desk.native import Decoder, SAMPLE_RATE
+from ft8swx.native import Decoder, SAMPLE_RATE
 
 SLOT = 15.0
 

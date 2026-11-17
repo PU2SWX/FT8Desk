@@ -1,4 +1,4 @@
-"""Tema visual do FT8Desk: paleta e folha de estilo (QSS)."""
+"""Tema visual do FT8SWX: paleta e folha de estilo (QSS)."""
 
 from __future__ import annotations
 

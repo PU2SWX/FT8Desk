@@ -8,6 +8,7 @@ import sys
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 
+from .cat import CatConfig
 from .ptt import PttConfig
 
 # Frequencias de discagem FT8 (USB) mais usadas, em MHz
@@ -27,9 +28,27 @@ def app_dir() -> Path:
         base = Path.home() / "Library" / "Application Support"
     else:
         base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-    d = base / "FT8Desk"
+    d = base / "FT8SWX"
+    if not d.exists():
+        _migrate_from_ft8desk(base / "FT8Desk", d)
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _migrate_from_ft8desk(old: Path, new: Path) -> None:
+    """Primeira execucao apos o rename: copia settings e log da pasta antiga (sem apagar nada)."""
+    if not old.is_dir():
+        return
+    try:
+        import shutil
+
+        new.mkdir(parents=True, exist_ok=True)
+        for src in old.iterdir():
+            if src.is_file():
+                name = "ft8swx.adi" if src.name == "ft8desk.adi" else src.name
+                shutil.copy2(src, new / name)
+    except OSError:
+        pass
 
 
 @dataclass
@@ -52,6 +71,7 @@ class Settings:
     max_repeats: int = 4
     ntp_sync: bool = True
     ptt: PttConfig = field(default_factory=PttConfig)
+    cat: CatConfig = field(default_factory=CatConfig)
     input_device: int | None = None
     output_device: int | None = None
     input_rate: int = 48000
@@ -62,7 +82,7 @@ class Settings:
     # -- io ------------------------------------------------------------
     @staticmethod
     def default_log() -> Path:
-        return app_dir() / "ft8desk.adi"
+        return app_dir() / "ft8swx.adi"
 
     def ensure_log(self) -> Path:
         return Path(self.log_path) if self.log_path else self.default_log()
@@ -85,9 +105,12 @@ class Settings:
         except Exception:
             return cls()
         ptt = data.pop("ptt", {}) or {}
+        cat = data.pop("cat", {}) or {}
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
-        clean = {k: v for k, v in data.items() if k in known and k != "ptt"}
+        clean = {k: v for k, v in data.items() if k in known and k not in ("ptt", "cat")}
         s = cls(**clean)
         ptt_known = set(PttConfig.__dataclass_fields__)  # type: ignore[attr-defined]
         s.ptt = PttConfig(**{k: v for k, v in ptt.items() if k in ptt_known})
+        cat_known = set(CatConfig.__dataclass_fields__)  # type: ignore[attr-defined]
+        s.cat = CatConfig(**{k: v for k, v in cat.items() if k in cat_known})
         return s

@@ -1,4 +1,4 @@
-# FT8Desk
+# FT8SWX
 
 Estação **FT8 para desktop** (Windows 10/11, também roda em Linux/macOS), com
 **PTT por FTDI via DTR** — pensada para quem usa cabo caseiro, DigiRig, XGGComms
@@ -11,6 +11,9 @@ bem, chamar CQ, completar QSO, logar em ADIF e chavear o rádio sem dor de cabe�
 
 ---
 
+> **0.9.0** — projeto renomeado de FT8Desk para **FT8SWX** (prefixo PU2SWX); novo: CAT (rigctld, Icom, Kenwood, Yaesu) e mapa de conexões.
+> Na primeira execução, `settings.json` e o log da pasta antiga `FT8Desk` são copiados para `FT8SWX` (a antiga não é apagada).
+
 ## 1. O que já funciona
 
 | Recurso | Estado |
@@ -20,6 +23,8 @@ bem, chamar CQ, completar QSO, logar em ADIF e chavear o rádio sem dor de cabe�
 | Waterfall + espectro com marcador de TX | ✅ |
 | Slots sincronizados em UTC (15 s) + NTP | ✅ |
 | PTT por porta serial: DTR, RTS ou ambos, com inversão | ✅ |
+| CAT: frequência/modo/PTT (rigctld, Icom CI-V, Kenwood, Yaesu) | ✅ testado com rádios simulados |
+| Mapa de conexões com distâncias (offline) | ✅ renderizado e testado |
 | TX delay / hang time configuráveis | ✅ |
 | Máquina de estados de QSO (CQ → relatório → RR73 → log) | ✅ testada |
 | Log ADIF 3.1.4 append-only | ✅ testado |
@@ -31,7 +36,7 @@ bem, chamar CQ, completar QSO, logar em ADIF e chavear o rádio sem dor de cabe�
 
 ## 2. A interface
 
-Console escuro com tema próprio (`ft8desk/ui/theme.py`), pensado para operar por
+Console escuro com tema próprio (`ft8swx/ui/theme.py`), pensado para operar por
 horas sem cansar a vista:
 
 - **Cabeçalho de estação** — faixas em botões (160 m a 6 m), frequência de
@@ -76,15 +81,15 @@ O script cria um ambiente isolado, instala as dependências, empacota com
 PyInstaller e gera:
 
 ```
-dist\FT8Desk\FT8Desk.exe      <- pasta pronta para rodar
-FT8Desk-windows.zip           <- é este arquivo que você envia
+dist\FT8SWX\FT8SWX.exe      <- pasta pronta para rodar
+FT8SWX-windows.zip           <- é este arquivo que você envia
 ```
 
 Tamanho esperado: ~170 MB descompactado, ~**100 MB** no ZIP (Qt + numpy).
 
 **Como o amigo usa:** descompacta em qualquer pasta, dá duplo clique em
-`FT8Desk.exe`. Não instala nada, não pede senha, não mexe no sistema. O log e as
-configurações ficam em `%APPDATA%\FT8Desk`.
+`FT8SWX.exe`. Não instala nada, não pede senha, não mexe no sistema. O log e as
+configurações ficam em `%APPDATA%\FT8SWX`.
 
 ### Avisos honestos
 
@@ -125,8 +130,8 @@ dir native\ft8shim.dll
 ### Versão em arquivo único (opcional)
 
 ```bat
-.venv\Scripts\pyinstaller --onefile --windowed --icon ft8desk.ico ^
-    --add-binary "native\ft8shim.dll;native" --name FT8Desk run.py
+.venv\Scripts\pyinstaller --onefile --windowed --icon ft8swx.ico ^
+    --add-binary "native\ft8shim.dll;native" --name FT8SWX run.py
 ```
 
 Gera um `.exe` só, mas abre mais devagar (descompacta em pasta temporária a cada
@@ -140,7 +145,7 @@ Pré-requisito: **Python 3.10+** ([python.org](https://www.python.org/downloads/
 marque *Add python.exe to PATH*).
 
 ```bat
-cd ft8desk
+cd ft8swx
 python -m pip install -r requirements.txt
 python run.py
 ```
@@ -156,7 +161,7 @@ python build_native.py
 Antes de operar, rode o diagnóstico:
 
 ```bat
-python -m ft8desk.diag
+python -m ft8swx.diag
 ```
 
 Se o NTP falhar, o `diag` mostra o motivo (UDP 123 bloqueado, servidor com
@@ -214,6 +219,35 @@ marque a caixa e teste de novo.
 
 A porta serial fica **aberta durante toda a sessão** (abrir/fechar porta faz o
 driver pulsar as linhas e pode gerar transmissão fantasma).
+
+### CAT — frequência, modo e PTT pelo rádio
+
+Em **Configurações → CAT / Rádio**. O CAT é opcional e independe do PTT por DTR/RTS.
+
+| Tipo | Quando usar |
+|---|---|
+| **Hamlib rigctld** | Qualquer rádio que o Hamlib conheça. Rode `rigctld -m <modelo> -r <porta> -s <baud>` e aponte o FT8SWX para `127.0.0.1:4532`. **É o caminho mais seguro.** |
+| Icom CI-V | IC-7300, IC-705, IC-7610… (endereço CI-V em hexadecimal: 94, A4, 98) |
+| Kenwood ASCII | TS-590, TS-2000 e compatíveis (`FA` de 11 dígitos) |
+| Yaesu ASCII | FT-991A, FT-710, FT-891, FTDX10 (`FA` de 9 dígitos) |
+
+O que o CAT faz:
+
+- **Discagem sincronizada com o VFO**: girar o botão do rádio atualiza a discagem e a
+  banda no app; clicar numa banda (ou digitar a discagem) sintoniza o rádio.
+- **USB-DATA automático** ao trocar de banda (desmarcável).
+- **Log com a frequência real** do rádio no ADIF.
+- **PTT por CAT** (opcional): marque *Usar CAT para PTT* e o DTR/RTS deixa de ser usado.
+- Chip **CAT 14.0740** na barra de status (vermelho se o rádio parar de responder).
+
+Pontos de atenção:
+
+- **Mesma porta para CAT e PTT por DTR/RTS não funciona**: uma porta serial não abre
+  duas vezes. O app avisa ao salvar. Use *PTT via CAT* ou duas portas.
+- Durante o TX a leitura de frequência pausa, e trocar de banda fica bloqueado.
+- O app abre a porta CAT com DTR/RTS em nível baixo, para não chavear o rádio ao abrir.
+- Os backends seriais (Icom/Kenwood/Yaesu) foram testados contra rádios **simulados**;
+  se o seu modelo reagir diferente, use o rigctld e abra uma issue.
 
 ---
 
@@ -309,7 +343,7 @@ desistir; só o CQ repete sem limite.
 
 ## 8. Log
 
-ADIF 3.1.4 em `%APPDATA%\FT8Desk\ft8desk.adi` (ou o caminho que você escolher).
+ADIF 3.1.4 em `%APPDATA%\FT8SWX\ft8swx.adi` (ou o caminho que você escolher).
 Gravado **na hora**, sem "salvar" — se o app fechar, o QSO está no disco.
 Importa em Log4OM, LogHX, DXLab, LoTW etc.
 
@@ -337,7 +371,7 @@ no log.
 
 Aba **LOG** → botão **Exportar ADIF...** (ou menu **Log**). O diálogo permite:
 
-- escolher destino (padrão `ft8desk-AAAAMMDD-HHMM.adi`)
+- escolher destino (padrão `ft8swx-AAAAMMDD-HHMM.adi`)
 - **formato**: `QRZ / geral (MODE=FT8)` ou `LoTW (legado) (MODE=MFSK + SUBMODE=FT8)`
 - filtrar por **data de corte**, **banda** e **modo**
 - remover duplicados (mesmo indicativo/dia/hora)
@@ -351,11 +385,28 @@ Não usa `SUBMODE` no formato QRZ, porque o Logbook trata FT8 como modo final.
 ### Limpar o log
 
 Aba **LOG → Limpar log...**. Os QSOs atuais são **arquivados** num arquivo com
-data e hora (`ft8desk-backup-20261116-014810.adi`) e um log novo em branco é
+data e hora (`ft8swx-backup-20261116-014810.adi`) e um log novo em branco é
 aberto. Nada é apagado — dá para reimportar o backup a qualquer momento.
 
 O texto é normalizado para ASCII antes de gravar (acentos em comentários
 quebrariam o contador de caracteres do ADIF em servidores que leem bytes).
+
+### Mapa de conexões
+
+A aba **MAPA** desenha seu grid e cada estação do log com arco de círculo máximo,
+colorido pela distância (< 1.000 km, até 5.000, até 10.000, acima disso).
+
+- Uma estação por indicativo (QSOs repetidos viram contagem e lista de bandas).
+- Filtros por **banda** e por **período** (24 h, 7 dias, 30 dias).
+- Resumo: nº de estações, mais distante, média. QSOs sem grid válido são contados e ignorados.
+- Tabela abaixo do mapa, do mais longe ao mais perto; clicar na linha destaca o arco
+  (e vice-versa). Passar o mouse mostra grid, distância, azimute e bandas.
+- Roda do mouse = zoom, arrastar = mover, duplo clique ou **Ajustar** = enquadrar tudo.
+- **Janela** abre o mapa em tela maior; **Salvar imagem** exporta PNG.
+- O desenho é offline (contorno Natural Earth 110m, domínio público, em
+  `ft8swx/data/world.json`): não precisa de internet nem de QtWebEngine.
+- Distâncias vão até o **centro do grid** informado; com grid de 4 caracteres a
+  incerteza é de algumas dezenas de km.
 
 ---
 
@@ -365,16 +416,19 @@ quebrariam o contador de caracteres do ADIF em servidores que leem bytes).
 native/ft8_shim.c     API C enxuta sobre o ft8_lib (create/feed/decode/encode)
 native/ft8_lib/       codec FT8/FT4 (kgoba/ft8_lib, MIT) — vendorizado
 build_native.py       compila a lib: zig cc → MSVC → gcc
-ft8desk/native.py     bindings ctypes (Decoder: feed/decode/encode, check_text)
-ft8desk/ptt.py        PTT serial (DTR/RTS, inversão, delays, test pulse)
-ft8desk/clock.py      SNTP próprio + fronteiras de slot UTC
-ft8desk/audio.py      sounddevice + reamostragem + SlotCollector
-ft8desk/qso.py        máquina de estados do QSO
-ft8desk/parse.py      interpretação de mensagens FT8
-ft8desk/adif.py       log ADIF
-ft8desk/grid.py       Maidenhead, distância, azimute
-ft8desk/waterfall_model.py   FFT → matriz de waterfall (numpy puro)
-ft8desk/ui/           PySide6: janela, waterfall, configurações
+ft8swx/native.py     bindings ctypes (Decoder: feed/decode/encode, check_text)
+ft8swx/ptt.py        PTT serial (DTR/RTS, inversão, delays, test pulse)
+ft8swx/cat.py        CAT: rigctld, Icom CI-V, Kenwood/Yaesu ASCII, CatPtt
+ft8swx/mapdata.py    conexões do log, grande círculo, mapa-mundi embutido
+ft8swx/clock.py      SNTP próprio + fronteiras de slot UTC
+ft8swx/audio.py      sounddevice + reamostragem + SlotCollector
+ft8swx/qso.py        máquina de estados do QSO
+ft8swx/parse.py      interpretação de mensagens FT8
+ft8swx/adif.py       log ADIF
+ft8swx/grid.py       Maidenhead, distância, azimute
+ft8swx/waterfall_model.py   FFT → matriz de waterfall (numpy puro)
+ft8swx/ui/           PySide6: janela, waterfall, configurações, mapa (map_view.py)
+ft8swx/data/world.json   contornos Natural Earth 110m (domínio público)
 ```
 
 Fluxo de dados:
@@ -395,6 +449,7 @@ Fluxo de dados:
 ```bat
 python tests\test_roundtrip.py   :: sintetiza FT8, mistura ruído, decodifica
 python tests\test_logic.py       :: parse, QSO, ADIF, grid, coletor, FFT
+python tests\test_cat_map.py     :: CAT (rádios simulados), config, mapa
 ```
 
 Nenhum dos dois precisa de rádio, placa de som ou display.
@@ -407,20 +462,21 @@ Nenhum dos dois precisa de rádio, placa de som ou display.
   estática com mypy contra os stubs oficiais do PySide6 — não por uso real em
   Windows. Pequenos ajustes de espaçamento podem ser necessários.
 - A interface operacional atualmente é focada em FT8; o codec já aceita FT4.
-- Sem CAT: banda/frequência são informativas, o rádio é sintonizado à mão.
+- CAT é opcional; sem ele, banda/frequência são informativas e o rádio é sintonizado à mão.
+- Backends CAT seriais validados só contra rádios simulados (rigctld é o recomendado).
 - Sem PSK Reporter / LoTW upload.
 - SNR é estimativa calibrada em sinais sintéticos (±1 dB); comparável ao WSJT-X,
   não idêntico.
 - Uma transmissão por slot (sem multi-tone/fox-hound).
 
 Roadmap curto: FT4 na UI, resposta automática a quem te chama, upload PSK
-Reporter, CAT via rigctl, mapa de estações.
+Reporter.
 
 ---
 
 ## 12. Licenças
 
-- Código do FT8Desk: use como quiser (MIT).
+- Código do FT8SWX: use como quiser (MIT).
 - `ft8_lib` — © Karlis Goba (YL3JG), licença **MIT** em `native/ft8_lib/LICENSE`.
 - Pequenos patches de portabilidade no `ft8_lib` (stpcpy, LOG_LEVEL, VLA-free)
   estão comentados no próprio código.

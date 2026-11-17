@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..audio import list_devices
+from ..cat import BACKENDS, CatConfig, CatController, CatError
 from ..config import Settings
 from ..ptt import PttController, PttError, list_serial_ports
 
@@ -26,6 +27,7 @@ class SettingsDialog(QDialog):
         tabs.addTab(self._station_tab(), "Estacao")
         tabs.addTab(self._audio_tab(), "Audio")
         tabs.addTab(self._ptt_tab(), "PTT / FTDI")
+        tabs.addTab(self._cat_tab(), "CAT / Radio")
         tabs.addTab(self._advanced_tab(), "Avancado")
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok |
@@ -161,6 +163,119 @@ class SettingsDialog(QDialog):
         self.cb_baud.setCurrentIndex(max(0, i))
         return w
 
+    def _cat_tab(self) -> QWidget:
+        w = QWidget()
+        v = QVBoxLayout(w)
+        c = self.s.cat
+        self.chk_cat = QCheckBox("Ativar controle CAT do radio")
+        self.chk_cat.setChecked(c.enabled)
+        v.addWidget(self.chk_cat)
+
+        box = QGroupBox("Conexao")
+        f = QFormLayout(box)
+        self.cb_cat_backend = QComboBox()
+        for key, label in BACKENDS.items():
+            self.cb_cat_backend.addItem(label, key)
+        self.cb_cat_backend.setCurrentIndex(max(0, self.cb_cat_backend.findData(c.backend)))
+        self.cb_cat_port = QComboBox()
+        self.bt_cat_refresh = QPushButton("Atualizar")
+        self.bt_cat_refresh.clicked.connect(self._fill_cat_ports)
+        prow = QHBoxLayout()
+        prow.addWidget(self.cb_cat_port)
+        prow.addWidget(self.bt_cat_refresh)
+        self.cb_cat_baud = QComboBox()
+        for b in (4800, 9600, 19200, 38400, 57600, 115200):
+            self.cb_cat_baud.addItem(str(b), b)
+        self.cb_cat_baud.setCurrentIndex(max(0, self.cb_cat_baud.findData(c.baud)))
+        self.ed_cat_addr = QLineEdit(f"{c.civ_addr:02X}")
+        self.ed_cat_addr.setMaximumWidth(60)
+        self.ed_cat_addr.setToolTip("Endereco CI-V em hexadecimal. IC-7300: 94, IC-705: A4, IC-7610: 98")
+        self.ed_cat_host = QLineEdit(c.host)
+        self.sp_cat_tcp = QSpinBox()
+        self.sp_cat_tcp.setRange(1, 65535)
+        self.sp_cat_tcp.setValue(c.tcp_port)
+        self._fill_cat_ports(select=c.port)
+        f.addRow("Tipo:", self.cb_cat_backend)
+        f.addRow("Porta serial:", prow)
+        f.addRow("Baud:", self.cb_cat_baud)
+        f.addRow("Endereco CI-V (hex):", self.ed_cat_addr)
+        f.addRow("rigctld - host:", self.ed_cat_host)
+        f.addRow("rigctld - porta TCP:", self.sp_cat_tcp)
+        v.addWidget(box)
+
+        self.chk_cat_mode = QCheckBox("Colocar o radio em USB-DATA ao trocar de banda")
+        self.chk_cat_mode.setChecked(c.set_mode)
+        self.chk_cat_ptt = QCheckBox("Usar CAT para PTT (em vez de DTR/RTS)")
+        self.chk_cat_ptt.setChecked(c.ptt_via_cat)
+        v.addWidget(self.chk_cat_mode)
+        v.addWidget(self.chk_cat_ptt)
+
+        hint = QLabel(
+            "Com CAT ativo, a discagem do FT8SWX acompanha o VFO do radio (e vice-versa: "
+            "clicar numa banda sintoniza o radio) e o log grava a frequencia real. "
+            "Se o seu radio usa a MESMA porta para CAT e PTT por DTR/RTS, marque "
+            "\"Usar CAT para PTT\": uma porta serial nao pode ser aberta duas vezes. "
+            "Para qualquer radio fora da lista, use o Hamlib (rigctld).")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color:#9aa4b8;")
+        self.bt_cat_test = QPushButton("Testar CAT (ler frequencia)")
+        self.bt_cat_test.clicked.connect(self._test_cat)
+        v.addWidget(hint)
+        v.addWidget(self.bt_cat_test)
+        v.addStretch(1)
+        return w
+
+    def _fill_cat_ports(self, *_, select: str | None = None) -> None:
+        current = select if select is not None else (
+            self.cb_cat_port.currentData() if self.cb_cat_port.count() else "")
+        self.cb_cat_port.clear()
+        self.cb_cat_port.addItem("(nenhuma)", "")
+        for dev, desc in list_serial_ports():
+            self.cb_cat_port.addItem(f"{dev} - {desc}", dev)
+        i = self.cb_cat_port.findData(current)
+        self.cb_cat_port.setCurrentIndex(i if i >= 0 else 0)
+
+    def _collect_cat(self) -> CatConfig:
+        try:
+            addr = int(self.ed_cat_addr.text().strip() or "94", 16) & 0xFF
+        except ValueError:
+            addr = 0x94
+        return CatConfig(
+            enabled=self.chk_cat.isChecked(),
+            backend=self.cb_cat_backend.currentData() or "rigctld",
+            port=self.cb_cat_port.currentData() or "",
+            baud=self.cb_cat_baud.currentData() or 19200,
+            host=self.ed_cat_host.text().strip() or "127.0.0.1",
+            tcp_port=int(self.sp_cat_tcp.value()),
+            civ_addr=addr,
+            set_mode=self.chk_cat_mode.isChecked(),
+            ptt_via_cat=self.chk_cat_ptt.isChecked(),
+            poll_s=self.s.cat.poll_s,
+        )
+
+    def _test_cat(self) -> None:
+        cfg = self._collect_cat()
+        cfg.enabled = True
+        # a porta serial so abre uma vez: solta a conexao da janela principal durante o teste
+        live = getattr(self.parent(), "cat", None)
+        was_live = bool(live and live.connected)
+        if was_live:
+            live.close()
+        ctrl = CatController(cfg)
+        try:
+            ctrl.open()
+            hz = ctrl.read_freq()
+            QMessageBox.information(self, "CAT", f"Radio respondeu: {hz / 1e6:.6f} MHz")
+        except CatError as exc:
+            QMessageBox.warning(self, "CAT", str(exc))
+        finally:
+            ctrl.close()
+            if was_live:
+                try:
+                    live.open()
+                except CatError:
+                    pass
+
     def _fill_ports(self) -> None:
         current = self.cb_port.currentData() if self.cb_port.count() else self.s.ptt.port
         self.cb_port.clear()
@@ -259,6 +374,16 @@ class SettingsDialog(QDialog):
         )
 
     def _accept(self) -> None:
+        cat = self._collect_cat()
+        ptt = self._collect_ptt()
+        if (cat.enabled and cat.uses_serial and not cat.ptt_via_cat and cat.port
+                and cat.port == ptt.port):
+            QMessageBox.warning(
+                self, "Porta em conflito",
+                f"{cat.port} esta selecionada para CAT e para PTT por DTR/RTS. "
+                "Uma porta serial nao pode ser aberta duas vezes.\n\n"
+                "Marque \"Usar CAT para PTT\" ou escolha outra porta.")
+            return
         s = self.s
         s.my_call = self.ed_call.text().strip().upper()
         s.my_grid = self.ed_grid.text().strip().upper()[:6]
@@ -268,7 +393,8 @@ class SettingsDialog(QDialog):
         s.input_rate = self.cb_in_rate.currentData()
         s.output_rate = self.cb_out_rate.currentData()
         s.tx_gain = float(self.sp_gain.value())
-        s.ptt = self._collect_ptt()
+        s.ptt = ptt
+        s.cat = cat
         s.tx_parity = self.cb_parity.currentData() or "auto"
         s.tx_offset_s = float(self.sp_offset.value())
         s.tx_report = int(self.sp_report.value())

@@ -9,8 +9,8 @@ from pathlib import Path
 
 # ADIF 3.1.4. O QRZ Logbook exige CALL, QSO_DATE, BAND e MODE por registro.
 ADIF_VERSION = "3.1.4"
-PROGRAM_ID = "FT8Desk"
-PROGRAM_VERSION = "0.8.0"
+PROGRAM_ID = "FT8SWX"
+PROGRAM_VERSION = "0.9.0"
 
 # Estilos de MODE/SUBMODE aceitos por cada destino.
 #   "qrz"  -> MODE=FT8  (o que o QRZ Logbook e o WSJT-X usam)
@@ -23,7 +23,7 @@ MODE_STYLES = {
 
 def adif_header(mode_style: str = "qrz") -> str:
     return (
-        f"FT8Desk ADIF export ({mode_style})\n"
+        f"FT8SWX ADIF export ({mode_style})\n"
         f"<ADIF_VER:{len(ADIF_VERSION)}>{ADIF_VERSION}"
         f"<PROGRAMID:{len(PROGRAM_ID)}>{PROGRAM_ID}"
         f"<PROGRAMVERSION:{len(PROGRAM_VERSION)}>{PROGRAM_VERSION}"

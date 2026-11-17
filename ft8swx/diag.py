@@ -1,4 +1,4 @@
-"""Diagnostico do ambiente: `python -m ft8desk.diag`."""
+"""Diagnostico do ambiente: `python -m ft8swx.diag`."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ def main() -> int:
     from . import __version__
 
     print("=" * 62)
-    print(f" FT8Desk {__version__} - diagnostico")
+    print(f" FT8SWX {__version__} - diagnostico")
     print("=" * 62)
     print(f"Python      : {sys.version.split()[0]} ({platform.system()} {platform.machine()})")
 

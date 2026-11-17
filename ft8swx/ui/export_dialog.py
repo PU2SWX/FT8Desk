@@ -29,7 +29,7 @@ class ExportDialog(QDialog):
         form.setSpacing(10)
 
         # -- destino --
-        default_name = time.strftime("ft8desk-%Y%m%d-%H%M.adi")
+        default_name = time.strftime("ft8swx-%Y%m%d-%H%M.adi")
         base = log.path.parent if log.path else Path.home()
         self.ed_path = QLineEdit(str(base / default_name))
         browse = QPushButton("Escolher...")

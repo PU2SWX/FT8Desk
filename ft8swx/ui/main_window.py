@@ -22,6 +22,7 @@ from ..audio import (
     FT8_RATE, SLOT_SECONDS, AudioConfig, AudioEngine, SlotCollector,
     backend_available, resample,
 )
+from ..cat import CatController, CatError, CatPtt
 from ..clock import SlotClock
 from ..config import BANDS, Settings
 from ..grid import compass_point, distance_bearing
@@ -32,6 +33,7 @@ from ..qso import Phase, QsoEngine, fmt_report
 from ..schedule import next_tx_slot, parity_name, tx_parity_for
 from ..waterfall_model import WaterfallModel
 from .export_dialog import ExportDialog
+from .map_view import MapPanel, MapWindow
 from .settings_dialog import SettingsDialog
 from .theme import C, stylesheet
 from .waterfall import CompassWidget, SlotBar, SpectrumWidget, WaterfallWidget
@@ -108,7 +110,8 @@ class MainWindow(QMainWindow):
         self.engine = QsoEngine(settings.my_call, settings.my_grid,
                                 settings.tx_report, settings.max_repeats)
         self.log = AdifLog(settings.ensure_log())
-        self.ptt = PttController(settings.ptt)
+        self.cat = CatController(settings.cat)
+        self.ptt = self._make_ptt()
         self.audio = AudioEngine(AudioConfig(
             input_device=settings.input_device,
             output_device=settings.output_device,
@@ -134,12 +137,17 @@ class MainWindow(QMainWindow):
         self._decodes: list = []
         self._grid_cache: dict[str, str] = {}   # indicativo -> ultimo grid visto
         self._pending_log = False               # loga so' depois de transmitir
+        self._cat_hold_until = 0.0              # ignora leitura do VFO logo apos sintonizar
+        self._map_win: MapWindow | None = None
 
         self._build_ui()
 
         self.timer = QTimer(self)
         self.timer.setInterval(50)
         self.timer.timeout.connect(self._on_tick)
+        self.cat_timer = QTimer(self)
+        self.cat_timer.setInterval(400)
+        self.cat_timer.timeout.connect(self._cat_poll)
 
     # ==================================================================
     # construcao da interface
@@ -160,7 +168,7 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         from .. import __version__
 
-        self.setWindowTitle(f"FT8Desk {__version__}")
+        self.setWindowTitle(f"FT8SWX {__version__}")
         self.resize(1280, 840)
         self.setStyleSheet(stylesheet())
 
@@ -193,6 +201,7 @@ class MainWindow(QMainWindow):
         right.addTab(self._build_decode_table(), "DECODES")
         right.addTab(self._build_log_table(), "LOG")
         right.addTab(self._build_qso_panel(), "QSO")
+        right.addTab(self._build_map_tab(), "MAPA")
 
         split.addWidget(left)
         split.addWidget(right)
@@ -209,9 +218,10 @@ class MainWindow(QMainWindow):
         self.lbl_ntp = self._chip("NTP: --")
         self.lbl_audio = self._chip("audio: --")
         self.lbl_ptt = self._chip("PTT: off")
+        self.lbl_cat = self._chip("CAT: off")
         self.lbl_rxcount = self._chip("0 decodes")
         for w in (self.lbl_rxcount, self.lbl_slot, self.lbl_parity,
-                  self.lbl_ntp, self.lbl_audio, self.lbl_ptt, self.lbl_clock):
+                  self.lbl_ntp, self.lbl_audio, self.lbl_cat, self.lbl_ptt, self.lbl_clock):
             sb.addPermanentWidget(w)
         self.lbl_clock.setObjectName("ClockSub")
         self.setStatusBar(sb)
@@ -257,7 +267,7 @@ class MainWindow(QMainWindow):
         logo.setSpacing(0)
         lb = QLabel("FT8")
         lb.setObjectName("Logo")
-        sub = QLabel("D E S K")
+        sub = QLabel("S W X")
         sub.setObjectName("LogoSub")
         logo.addWidget(lb)
         logo.addWidget(sub)
@@ -542,13 +552,8 @@ class MainWindow(QMainWindow):
                                 f"Backend de audio indisponivel:\n{err or 'sounddevice ausente'}\n\n"
                                 "Instale com: pip install sounddevice")
 
-        try:
-            self.ptt.open()
-            self._set_chip(self.lbl_ptt,
-                           f"PTT {self.s.ptt.port}" if self.s.ptt.port else "PTT off",
-                           "ChipOk" if self.s.ptt.port else "Chip")
-        except PttError as exc:
-            QMessageBox.warning(self, "PTT", str(exc))
+        self._open_rig()
+        self.cat_timer.start()
 
         if self.s.ntp_sync:
             self._sync_clock(async_=True)
@@ -556,11 +561,15 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, ev) -> None:  # noqa: N802
         self.timer.stop()
+        self.cat_timer.stop()
+        if self._map_win is not None:
+            self._map_win.close()
         if self._tx_job and self._tx_job.isRunning():
             self._tx_job.cancel()
             self._tx_job.wait(1500)
         self.audio.close()
         self.ptt.close()
+        self.cat.close()
         try:
             self.decoder.close()
             self.encoder.close()
@@ -854,9 +863,7 @@ class MainWindow(QMainWindow):
 
     def _on_tx_finished(self, ok: bool, err: str) -> None:
         self._tx_busy = False
-        self._set_chip(self.lbl_ptt,
-                       f"PTT {self.s.ptt.port}" if self.s.ptt.port else "PTT off",
-                       "ChipOk" if self.s.ptt.port else "Chip")
+        self._set_chip(self.lbl_ptt, *self._ptt_idle_label())
         self.lbl_qso_state.setStyleSheet(f"color:{C['accent']}; letter-spacing:2px;")
         if not ok and err:
             self.statusBar().showMessage(f"TX: {err}", 6000)
@@ -901,8 +908,7 @@ class MainWindow(QMainWindow):
             pass
         self.engine.reset()
         self._select_tx_slot(-1)
-        self._set_chip(self.lbl_ptt,
-                       f"PTT {self.s.ptt.port}" if self.s.ptt.port else "PTT off", "Chip")
+        self._set_chip(self.lbl_ptt, *self._ptt_idle_label())
         self.statusBar().showMessage("TX interrompido", 3000)
 
     def _test_ptt(self) -> None:
@@ -1164,6 +1170,7 @@ class MainWindow(QMainWindow):
             self.chip_qsos.setText(f"{len(self.log.records)} QSOs")
         if hasattr(self, "lbl_log_count"):
             self.lbl_log_count.setText(f"{len(self.log.records)} QSOs no log")
+        self._refresh_map()
 
     def _refresh_band_buttons(self) -> None:
         for name, btn in self.band_buttons.items():
@@ -1177,6 +1184,7 @@ class MainWindow(QMainWindow):
                 self.ed_dial.setText(f"{mhz:.4f}")
                 break
         self._refresh_band_buttons()
+        self._cat_apply(set_mode=True)
 
     def _slot_index(self, t: float | None = None) -> int:
         return int(math.floor((self.clock.now() if t is None else t)
@@ -1187,9 +1195,14 @@ class MainWindow(QMainWindow):
 
     def _dial_edited(self) -> None:
         try:
-            self.s.dial_mhz = float(self.ed_dial.text().replace(",", "."))
+            val = float(self.ed_dial.text().replace(",", "."))
         except ValueError:
             self.ed_dial.setText(f"{self.s.dial_mhz:.4f}")
+            return
+        if abs(val - round(self.s.dial_mhz, 4)) < 1e-9:
+            return                      # nada mudou (o campo mostra 4 casas)
+        self.s.dial_mhz = val
+        self._cat_apply(set_mode=False)
 
     def _set_tx_freq(self, hz: float) -> None:
         hz = min(2900.0, max(200.0, float(hz)))
@@ -1208,6 +1221,105 @@ class MainWindow(QMainWindow):
         self.s.my_grid = self.ed_grid.text().strip().upper()[:6]
         self.engine.configure(self.s.my_call, self.s.my_grid, self.s.tx_report)
         self._refresh_tx_seq()
+        self._refresh_map()
+
+    # ==================================================================
+    # CAT e mapa
+    # ==================================================================
+    def _make_ptt(self) -> PttController:
+        c = self.s.cat
+        if c.enabled and c.ptt_via_cat:
+            return CatPtt(self.cat, self.s.ptt)
+        return PttController(self.s.ptt)
+
+    def _ptt_idle_label(self) -> tuple[str, str]:
+        c = self.s.cat
+        if c.enabled and c.ptt_via_cat:
+            return "PTT CAT", "ChipOk"
+        if self.s.ptt.port:
+            return f"PTT {self.s.ptt.port}", "ChipOk"
+        return "PTT off", "Chip"
+
+    def _open_rig(self) -> None:
+        try:
+            self.cat.open()
+        except CatError as exc:
+            QMessageBox.warning(self, "CAT", str(exc))
+        try:
+            self.ptt.open()
+        except PttError as exc:
+            QMessageBox.warning(self, "PTT", str(exc))
+        self._set_chip(self.lbl_ptt, *self._ptt_idle_label())
+        self._cat_hold_until = 0.0
+        self._cat_chip()
+
+    def _cat_chip(self) -> None:
+        c = self.cat
+        if not self.s.cat.enabled:
+            self._set_chip(self.lbl_cat, "CAT: off", "Chip")
+        elif not c.connected:
+            self._set_chip(self.lbl_cat, "CAT: erro", "ChipErr")
+        elif c.healthy:
+            self._set_chip(self.lbl_cat, f"CAT {c.freq_hz / 1e6:.4f}", "ChipOk")
+        else:
+            self._set_chip(self.lbl_cat, "CAT: sem resposta", "ChipErr")
+            if c.last_error:
+                self.lbl_cat.setToolTip(c.last_error)
+
+    def _cat_poll(self) -> None:
+        """Acompanha o VFO do radio: a discagem do app segue o que esta no radio."""
+        if not self.s.cat.enabled:
+            return
+        self._cat_chip()
+        c = self.cat
+        if not c.healthy or self._tx_busy or time.monotonic() < self._cat_hold_until:
+            return
+        mhz = c.freq_hz / 1e6
+        if abs(mhz - self.s.dial_mhz) < 1e-5:
+            return
+        self.s.dial_mhz = mhz
+        self.ed_dial.setText(f"{mhz:.4f}")
+        self.s.band = band_from_mhz(mhz).lower()    # "" fora das bandas conhecidas
+        self._refresh_band_buttons()
+
+    def _cat_apply(self, set_mode: bool) -> None:
+        """Envia a discagem do app para o radio (e, se pedido, coloca em USB-DATA)."""
+        if not (self.s.cat.enabled and self.cat.connected):
+            return
+        if self._tx_busy or self.cat.keyed:
+            self.statusBar().showMessage("CAT: aguarde o fim da transmissao", 3000)
+            return
+        self._cat_hold_until = time.monotonic() + 1.5
+        try:
+            self.cat.set_freq(round(self.s.dial_mhz * 1e6))
+            if set_mode and self.s.cat.set_mode:
+                self.cat.set_mode_data()
+        except CatError as exc:
+            self.statusBar().showMessage(f"CAT: {exc}", 6000)
+
+    def _build_map_tab(self) -> QWidget:
+        self._map_getters = (lambda: self.log.records,
+                             lambda: self.s.my_grid,
+                             lambda: self.s.my_call)
+        self.map_panel = MapPanel(*self._map_getters)
+        self.map_panel.detachRequested.connect(self._open_map_window)
+        self.map_panel.refresh()
+        return self.map_panel
+
+    def _refresh_map(self) -> None:
+        if not hasattr(self, "map_panel"):
+            return
+        self.map_panel.refresh()
+        if self._map_win is not None and self._map_win.isVisible():
+            self._map_win.panel.refresh()
+
+    def _open_map_window(self) -> None:
+        if self._map_win is None:
+            self._map_win = MapWindow(*self._map_getters)
+        self._map_win.panel.refresh()
+        self._map_win.show()
+        self._map_win.raise_()
+        self._map_win.activateWindow()
 
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.s, self)
@@ -1218,12 +1330,12 @@ class MainWindow(QMainWindow):
             self.ed_grid.setText(self.s.my_grid)
             self.log = AdifLog(self.s.ensure_log())
             self._load_log_table()
-            self.ptt.cfg = self.s.ptt
             self.ptt.close()
-            try:
-                self.ptt.open()
-            except PttError as exc:
-                QMessageBox.warning(self, "PTT", str(exc))
+            self.cat.close()
+            self.cat = CatController(self.s.cat)
+            self.ptt = self._make_ptt()
+            self._open_rig()
+            self._refresh_map()
             self.audio.cfg.tx_gain = self.s.tx_gain
             self._refresh_band_buttons()
             self._sync_auto_button()

@@ -1,13 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""PyInstaller spec do FT8Desk.
+"""PyInstaller spec do FT8SWX.
 
-Gera uma pasta autossuficiente (dist/FT8Desk) com FT8Desk.exe. Quem recebe o
+Gera uma pasta autossuficiente (dist/FT8SWX) com FT8SWX.exe. Quem recebe o
 arquivo NAO precisa de Python instalado.
 
 Uso (no Windows):
     build_exe.bat
 ou manualmente:
-    pyinstaller --noconfirm --clean ft8desk.spec
+    pyinstaller --noconfirm --clean ft8swx.spec
 """
 
 import sys
@@ -31,7 +31,8 @@ if not NATIVE.exists():
 
 datas = [
     (str(NATIVE), "native"),
-    (str(ROOT / "native" / "ft8desk.png"), "native"),
+    (str(ROOT / "native" / "ft8swx.png"), "native"),
+    (str(ROOT / "ft8swx" / "data" / "world.json"), "ft8swx/data"),
 ]
 binaries = [(str(NATIVE), "native")]
 
@@ -41,10 +42,11 @@ hiddenimports = [
     "serial.tools.list_ports_common",
     "sounddevice",
     "numpy",
-    "ft8desk.ui.export_dialog",
-    "ft8desk.ui.settings_dialog",
-    "ft8desk.ui.waterfall",
-    "ft8desk.ui.theme",
+    "ft8swx.ui.export_dialog",
+    "ft8swx.ui.settings_dialog",
+    "ft8swx.ui.waterfall",
+    "ft8swx.ui.map_view",
+    "ft8swx.ui.theme",
 ]
 
 # enxuga o pacote: nada disso e' usado pelo app
@@ -80,13 +82,13 @@ a.datas = [d for d in a.datas if "translations" not in d[0].lower()]
 
 pyz = PYZ(a.pure)  # noqa: F821
 
-icon = ROOT / "ft8desk.ico"
+icon = ROOT / "ft8swx.ico"
 exe = EXE(  # noqa: F821
     pyz,
     a.scripts,
     [],
     exclude_binaries=True,
-    name="FT8Desk",
+    name="FT8SWX",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -103,5 +105,5 @@ coll = COLLECT(  # noqa: F821
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="FT8Desk",
+    name="FT8SWX",
 )

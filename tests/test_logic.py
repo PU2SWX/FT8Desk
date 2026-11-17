@@ -8,15 +8,15 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ft8desk.adif import (AdifLog, QsoRecord, adif_header, band_from_mhz,
+from ft8swx.adif import (AdifLog, QsoRecord, adif_header, band_from_mhz,
                           filter_records, is_recent_duplicate, read_adif)
-from ft8desk.auto import CqCandidate, pick_cq
-from ft8desk.audio import SlotCollector, resample
-from ft8desk.grid import distance_bearing, grid_to_latlon, latlon_to_grid
-from ft8desk.parse import parse_message
-from ft8desk.qso import Phase, QsoEngine, fmt_report
-from ft8desk.schedule import next_tx_slot, tx_parity_for
-from ft8desk.waterfall_model import WaterfallModel
+from ft8swx.auto import CqCandidate, pick_cq
+from ft8swx.audio import SlotCollector, resample
+from ft8swx.grid import distance_bearing, grid_to_latlon, latlon_to_grid
+from ft8swx.parse import parse_message
+from ft8swx.qso import Phase, QsoEngine, fmt_report
+from ft8swx.schedule import next_tx_slot, tx_parity_for
+from ft8swx.waterfall_model import WaterfallModel
 
 fails = []
 
@@ -149,7 +149,7 @@ def test_adif():
     n = log.export(exp, mode_style="qrz")
     check(n == 2, f"exportou {n} QSOs")
     txt = exp.read_text()
-    check(txt.startswith("FT8Desk"), "cabecalho presente")
+    check(txt.startswith("FT8SWX"), "cabecalho presente")
     check("<ADIF_VER:5>3.1.4" in txt and "<EOH>" in txt, "versao e EOH")
     # campos obrigatorios do QRZ em todo registro
     for campo in ("<CALL:", "<QSO_DATE:", "<BAND:", "<MODE:"):
@@ -200,7 +200,7 @@ def test_adif():
     check(backup.exists() and len(read_adif(backup)) == 2,
           "backup guardou os 2 QSOs")
     check(len(lg.records) == 0 and lg.path.exists(), "log novo em branco")
-    check(lg.path.read_text().startswith("FT8Desk"), "cabecalho recriado")
+    check(lg.path.read_text().startswith("FT8SWX"), "cabecalho recriado")
 
 
 def test_collector():

@@ -11,7 +11,7 @@ Procura um compilador nesta ordem:
   2. cl       (MSVC, precisa de "x64 Native Tools Command Prompt")
   3. gcc/cc   (MinGW, Linux, macOS)
 
-Saída: ft8desk/native/libft8shim.{dll|so|dylib}
+Saída: ft8swx/native/libft8shim.{dll|so|dylib}
 """
 
 import os

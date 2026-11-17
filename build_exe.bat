@@ -1,10 +1,10 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title FT8Desk - gerar executavel
+title FT8SWX - gerar executavel
 
 echo ============================================================
-echo  FT8Desk - empacotando para Windows
+echo  FT8SWX - empacotando para Windows
 echo ============================================================
 echo.
 
@@ -37,17 +37,17 @@ echo       OK - usando native\ft8shim.dll
 
 :native_done
 echo [4/5] Empacotando com PyInstaller (pode levar 1-3 min)...
-"%PY%" -m PyInstaller --noconfirm --clean ft8desk.spec
+"%PY%" -m PyInstaller --noconfirm --clean ft8swx.spec
 if errorlevel 1 goto :fail_pyinstaller
 
 echo [5/5] Gerando o ZIP para distribuir...
-"%PY%" -c "import shutil; shutil.make_archive('FT8Desk-windows','zip','dist','FT8Desk')"
+"%PY%" -c "import shutil; shutil.make_archive('FT8SWX-windows','zip','dist','FT8SWX')"
 
 echo.
 echo ============================================================
 echo  PRONTO
-echo    Pasta : dist\FT8Desk\FT8Desk.exe
-echo    ZIP   : FT8Desk-windows.zip   (^<-- envie este para os amigos^)
+echo    Pasta : dist\FT8SWX\FT8SWX.exe
+echo    ZIP   : FT8SWX-windows.zip   (^<-- envie este para os amigos^)
 echo ============================================================
 echo.
 pause
@@ -74,7 +74,7 @@ echo [ERRO] A biblioteca nativa (native\ft8shim.dll) nao foi gerada.
 echo.
 echo Duas causas comuns:
 echo   1. Antivirus removeu o arquivo. Restaure em quarentena ou exclua
-echo      a pasta do FT8Desk da verificacao, e rode este script de novo.
+echo      a pasta do FT8SWX da verificacao, e rode este script de novo.
 echo   2. Sem compilador. Instale o compilador portatil manualmente:
 echo        .venv\Scripts\python -m pip install ziglang
 echo        .venv\Scripts\python build_native.py

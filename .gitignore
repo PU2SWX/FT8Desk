@@ -20,7 +20,7 @@ dist/
 *.egg-info/
 
 # PyInstaller / local build output
-FT8Desk-windows.zip
+FT8SWX-windows.zip
 
 # Runtime data / local configuration
 *.log

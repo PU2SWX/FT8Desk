@@ -19,8 +19,8 @@ def main(argv: list[str] | None = None) -> int:
     from .ui.theme import stylesheet
 
     app = QApplication(argv if argv is not None else sys.argv)
-    app.setApplicationName("FT8Desk")
-    app.setOrganizationName("FT8Desk")
+    app.setApplicationName("FT8SWX")
+    app.setOrganizationName("FT8SWX")
     app.setStyle("Fusion")          # base neutra; o QSS define a identidade
     app.setStyleSheet(stylesheet())
 
@@ -38,7 +38,7 @@ def main(argv: list[str] | None = None) -> int:
 
         from .native import resource_path
 
-        icon = resource_path("native", "ft8desk.png")
+        icon = resource_path("native", "ft8swx.png")
         if icon.exists():
             app.setWindowIcon(QIcon(str(icon)))
     except Exception:
