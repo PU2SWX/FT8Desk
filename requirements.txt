@@ -1,0 +1,8 @@
+PySide6-Essentials>=6.5
+numpy>=1.24
+sounddevice>=0.4.6
+pyserial>=3.5
+# opcional: reamostragem de qualidade para taxas nao multiplas de 12 kHz
+# scipy>=1.10
+# opcional: compilador C no Windows caso nao use MSVC
+# ziglang>=0.13
