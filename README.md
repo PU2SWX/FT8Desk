@@ -10,7 +10,7 @@ metade dos projetos sérios de FT8), com o que importa no dia a dia: decodificar
 bem, chamar CQ, completar QSO, logar em ADIF e chavear o rádio sem dor de cabeça.
 
 ---
-
+<img width="1366" height="770" alt="ft8swx-v9" src="https://github.com/user-attachments/assets/855877da-0b78-4f93-98c5-143129160f9a" />
 > **0.9.0** — projeto renomeado de FT8Desk para **FT8SWX** (prefixo PU2SWX); novo: CAT (rigctld, Icom, Kenwood, Yaesu) e mapa de conexões.
 > Na primeira execução, `settings.json` e o log da pasta antiga `FT8Desk` são copiados para `FT8SWX` (a antiga não é apagada).
 
