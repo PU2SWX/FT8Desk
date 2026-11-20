@@ -31,6 +31,9 @@ jobs:
       - name: Compilar biblioteca nativa
         run: python build_native.py
 
+      - name: Compilar PortAudio sem WDM-KS
+        run: python build_portaudio.py
+
       - name: Executar testes
         run: python -m pytest -q
 

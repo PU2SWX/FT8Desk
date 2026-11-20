@@ -2,20 +2,83 @@
 
 from __future__ import annotations
 
+import os
 import queue
+import subprocess
+import sys
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
-try:
-    import sounddevice as sd
-except Exception as exc:  # pragma: no cover
-    sd = None
-    _SD_ERROR = str(exc)
-else:
-    _SD_ERROR = ""
+_PROBE_ENV = "FT8SWX_AUDIO_PROBE"
+
+
+def _prefer_bundled_portaudio() -> str:
+    """Windows: faz o sounddevice carregar native/portaudio.dll (compilada SEM WDM-KS).
+
+    A DLL que vem com o sounddevice inclui WDM-KS; com o FlexRadio DAX ativo
+    (SmartSDR aberto) o Pa_Initialize() dela corrompe o heap (0xC0000374) e
+    derruba o processo. O sounddevice procura 'portaudio.dll' no PATH antes de
+    usar a propria DLL, entao basta colocar a nossa pasta na frente.
+    """
+    if not sys.platform.startswith("win"):
+        return ""
+    from .native import resource_path
+
+    for folder in (resource_path("native"), Path(__file__).resolve().parent.parent / "native"):
+        if (folder / "portaudio.dll").exists():
+            os.environ["PATH"] = str(folder) + os.pathsep + os.environ.get("PATH", "")
+            return str(folder / "portaudio.dll")
+    return ""
+
+
+def _probe_command() -> list[str]:
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--audio-probe"]          # tratado no run.py
+    return [sys.executable, "-c", "from ft8swx.audio import probe_main; raise SystemExit(probe_main())"]
+
+
+def _probe_portaudio() -> str:
+    """Inicializa a PortAudio num processo filho. Se algum driver derrubar o
+    processo, o app abre mesmo assim (sem audio) em vez de fechar sem aviso.
+    Devolve "" se deu certo, ou a mensagem de erro."""
+    if os.environ.get(_PROBE_ENV) or not sys.platform.startswith("win"):
+        return ""
+    env = dict(os.environ, **{_PROBE_ENV: "1"})
+    try:
+        r = subprocess.run(_probe_command(), env=env, timeout=20,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except subprocess.TimeoutExpired:
+        return "a inicializacao do audio (PortAudio) travou ao listar os dispositivos"
+    except OSError:
+        return ""                     # nao deu para testar: segue o caminho normal
+    if r.returncode == 0:
+        return ""
+    return (f"um driver de audio derrubou a PortAudio (codigo 0x{r.returncode & 0xFFFFFFFF:08X}). "
+            "Feche programas de audio virtual e tente de novo.")
+
+
+PORTAUDIO_DLL = _prefer_bundled_portaudio()
+_SD_ERROR = _probe_portaudio()
+sd = None
+if not _SD_ERROR:
+    try:
+        import sounddevice as sd
+    except Exception as exc:  # pragma: no cover
+        sd = None
+        _SD_ERROR = str(exc)
+
+
+def probe_main() -> int:
+    """Executado no processo filho (FT8SWX.exe --audio-probe)."""
+    if sd is None:
+        return 3
+    sd.query_devices()
+    return 0
 
 FT8_RATE = 12000
 SLOT_SECONDS = {"FT8": 15.0, "FT4": 7.5}

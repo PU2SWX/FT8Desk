@@ -36,6 +36,14 @@ datas = [
 ]
 binaries = [(str(NATIVE), "native")]
 
+# PortAudio sem WDM-KS (evita o crash 0xC0000374 com FlexRadio DAX). Gere com:
+#     python build_portaudio.py
+if sys.platform.startswith("win"):
+    PA_DLL = ROOT / "native" / "portaudio.dll"
+    if not PA_DLL.exists():
+        raise SystemExit(f"PortAudio ausente: {PA_DLL}\nRode primeiro:  python build_portaudio.py")
+    binaries.append((str(PA_DLL), "native"))
+
 # importados dinamicamente / por plugins
 hiddenimports = [
     "serial.tools.list_ports",

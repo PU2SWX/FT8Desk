@@ -36,6 +36,12 @@ goto :fail_native
 echo       OK - usando native\ft8shim.dll
 
 :native_done
+if exist "native\portaudio.dll" goto :pa_ok
+echo       PortAudio sem WDM-KS (compatibilidade com FlexRadio DAX)...
+"%PY%" -m pip install --quiet ziglang
+"%PY%" build_portaudio.py
+if not exist "native\portaudio.dll" goto :fail_native
+:pa_ok
 echo [4/5] Empacotando com PyInstaller (pode levar 1-3 min)...
 "%PY%" -m PyInstaller --noconfirm --clean ft8swx.spec
 if errorlevel 1 goto :fail_pyinstaller

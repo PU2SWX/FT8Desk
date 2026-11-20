@@ -5,6 +5,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+if "--audio-probe" in sys.argv:   # processo filho: testa a PortAudio (ft8swx/audio.py)
+    from ft8swx.audio import probe_main
+
+    raise SystemExit(probe_main())
+
 from ft8swx.native import is_frozen, load_library  # noqa: E402
 
 if not is_frozen():

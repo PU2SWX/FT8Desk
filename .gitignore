@@ -40,3 +40,13 @@ work/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# PortAudio generated files
+native/portaudio.dll
+native/pa_allocation.lib
+
+# Local backups and patch files
+*.bak
+*.bak2
+ft8swx.bak/
+ft8swx-flexradio-dax.patch
