@@ -113,9 +113,14 @@ def build(clean: bool = False) -> Path:
     if kind == "msvc":
         cmd = cc + ["/nologo", "/O2", "/LD", "/D_CRT_SECURE_NO_WARNINGS", "/DLOG_LEVEL=LOG_ERROR", inc, *srcs, f"/Fe:{out}", "/link", "/FORCE:MULTIPLE"]
     else:
-        cmd = cc + ["-O3", "-fPIC", "-shared", "-std=c11", "-D_GNU_SOURCE", "-DLOG_LEVEL=LOG_ERROR", inc, *srcs, "-o", str(out), "-lm"]
-        if sys.platform == "darwin":
-            cmd += ["-undefined", "dynamic_lookup"]
+        arch_flags = []
+        if kind == "zig" and sys.platform == "win32":
+            arch_flags = ["-mcpu=x86_64"]
+
+        cmd = cc + ["-O3", *arch_flags, "-fPIC", "-shared", "-std=c11", "-D_GNU_SOURCE", "-DLOG_LEVEL=LOG_ERROR", inc, *srcs, "-o", str(out), "-lm"]
+
+    if sys.platform == "darwin":
+        cmd += ["-undefined", "dynamic_lookup"]
 
     print(f"[build] compilador: {kind}")
     print("[build] " + " ".join(cmd))
