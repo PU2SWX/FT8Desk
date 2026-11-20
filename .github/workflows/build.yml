@@ -1,0 +1,49 @@
+name: Build FT8SWX Windows
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Baixar codigo
+        uses: actions/checkout@v4
+
+      - name: Preparar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: "x64"
+
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller ziglang pytest
+
+      - name: Compilar biblioteca nativa
+        run: python build_native.py
+
+      - name: Executar testes
+        run: python -m pytest -q
+
+      - name: Gerar executavel
+        run: python -m PyInstaller --noconfirm --clean ft8swx.spec
+
+      - name: Criar ZIP
+        run: |
+          python -c "import shutil; shutil.make_archive('FT8SWX-windows','zip','dist','FT8SWX')"
+
+      - name: Publicar ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: FT8SWX-windows
+          path: FT8SWX-windows.zip
+          if-no-files-found: error
