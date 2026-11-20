@@ -48,6 +48,10 @@ def _probe_portaudio() -> str:
     if os.environ.get(_PROBE_ENV) or not sys.platform.startswith("win"):
         return ""
     env = dict(os.environ, **{_PROBE_ENV: "1"})
+    # o filho faz "from ft8swx.audio import ...": precisa achar o pacote mesmo
+    # quando o app foi iniciado de outra pasta (python C:\...\run.py)
+    root = str(Path(__file__).resolve().parent.parent)
+    env["PYTHONPATH"] = root + os.pathsep + env.get("PYTHONPATH", "")
     try:
         r = subprocess.run(_probe_command(), env=env, timeout=20,
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
