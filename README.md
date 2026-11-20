@@ -10,7 +10,12 @@ metade dos projetos sérios de FT8), com o que importa no dia a dia: decodificar
 bem, chamar CQ, completar QSO, logar em ADIF e chavear o rádio sem dor de cabeça.
 
 ---
-<img width="1366" height="770" alt="ft8swx-v9" src="https://github.com/user-attachments/assets/855877da-0b78-4f93-98c5-143129160f9a" />
+
+> **0.9.5** — corrige crash (heap corruption) ao fechar durante um decode: o app espera a thread de decode e o `Decoder` ficou thread-safe; `crash.log` para falhas nativas; WDM-KS some da lista de áudio.
+> **0.9.4** — barras de nível de áudio RX e TX no cabeçalho (RMS em dBFS, pico retido, LED de CLIP); rótulos sem "caixa" nos painéis.
+> **0.9.3** — temas: Escuro, Claro, Dial âmbar e Papel (QSL), em *Exibir → Tema* e em Configurações; troca ao vivo.
+> **0.9.2** — CAT: log com porta/baud, erro mostra o que o rádio devolveu, opção "Manter RTS ligado" (Yaesu com CAT RTS ENABLE).
+> **0.9.1** — PTT: watchdog, repouso antes de abrir a porta, log em arquivo, teste de PTT sem conflito de porta.
 > **0.9.0** — projeto renomeado de FT8Desk para **FT8SWX** (prefixo PU2SWX); novo: CAT (rigctld, Icom, Kenwood, Yaesu) e mapa de conexões.
 > Na primeira execução, `settings.json` e o log da pasta antiga `FT8Desk` são copiados para `FT8SWX` (a antiga não é apagada).
 
@@ -185,6 +190,17 @@ Ele mostra: biblioteca nativa + auto-teste de encode/decode, dispositivos de
 
 ---
 
+### Nível de áudio (RX e TX)
+
+Duas barras no cabeçalho, ao lado do grid. A escala vai de −60 a 0 dBFS; a barra mostra o nível
+médio (RMS), o traço branco é o pico retido e o **LED vermelho** acende por 2 s quando o pico chega
+perto de 0 dBFS (saturação). As marcas finas indicam a faixa boa.
+
+- **RX:** verde entre −45 e −15 dBFS; âmbar se estiver fraco ou alto. Ajuste o volume do rádio/placa até
+  ficar no verde sem acender o LED. Faixas indicativas: depende da placa e do rádio.
+- **TX:** mostra o áudio que o app envia, já com o ganho de TX (Configurações → Áudio). Não deve
+  saturar nem causar ALC no rádio; reduza o ganho se o rádio mostrar ALC.
+
 ## 6. PTT por FTDI (DTR)
 
 ### Ligação típica
@@ -220,6 +236,28 @@ marque a caixa e teste de novo.
 A porta serial fica **aberta durante toda a sessão** (abrir/fechar porta faz o
 driver pulsar as linhas e pode gerar transmissão fantasma).
 
+### Se o app fechar sozinho, sem mensagem
+
+Código de saída **-1073740940 (0xC0000374)** = corrupção de heap, derrubada pelo Windows na hora.
+Para achar o módulo culpado: *Visualizador de Eventos → Logs do Windows → Aplicativo* e procure
+"Erro de Aplicativo" com o horário; o campo **Nome do módulo com falha** diz se foi
+`ft8shim.dll`, `libportaudio`/driver de áudio, `Qt6*.dll` ou outro. Falhas capturáveis
+(access violation) deixam a pilha Python em `crash.log` (mesma pasta do `ft8swx.log`).
+Driver de áudio virtual (DAX, VB-Cable) é suspeito conhecido: teste com eles fechados.
+
+### Se o PTT travar ou chavear sozinho
+
+- **Watchdog:** o PTT é liberado à força depois de 20 s ligado (o FT8 usa ~13 s), mesmo que o
+  áudio trave. `max_tx_s` no `settings.json`, em `ptt` (0 desliga).
+- **Log:** `ft8swx.log` na pasta de configuração (`%APPDATA%\FT8SWX`, a mesma do `settings.json`) registra
+  PTT ON/OFF, watchdog, erros de porta e perdas de CAT, com horário. Mande esse arquivo ao relatar um problema.
+- As linhas DTR/RTS agora são colocadas em repouso **antes** de abrir a porta. Mesmo assim,
+  o driver do CH340 pode dar um pulso de microssegundos ao abrir; o FT232/FTDI é mais bem comportado.
+- **RF na USB:** com 100 W, o RF entra pelos cabos USB e pode travar o CH340. Use
+  ferrites (várias voltas) nos dois cabos, perto do adaptador e do rádio, e afaste-os da antena.
+  Durante o TX o app não faz polling CAT.
+- O botão *Testar PTT* agora solta a porta da janela principal durante o teste.
+
 ### CAT — frequência, modo e PTT pelo rádio
 
 Em **Configurações → CAT / Rádio**. O CAT é opcional e independe do PTT por DTR/RTS.
@@ -246,6 +284,9 @@ Pontos de atenção:
   duas vezes. O app avisa ao salvar. Use *PTT via CAT* ou duas portas.
 - Durante o TX a leitura de frequência pausa, e trocar de banda fica bloqueado.
 - O app abre a porta CAT com DTR/RTS em nível baixo, para não chavear o rádio ao abrir.
+- **Rádio Yaesu não responde?** (1) o *baud* do app tem que ser igual ao menu **CAT RATE** do rádio
+  (FT-991A: padrão 4800; FT-891: 9600; FT-710: 38400); (2) use a porta *Enhanced/CAT*, não a *Standard*;
+  (3) se o menu **CAT RTS** estiver ENABLE, marque *Manter RTS ligado*. FT-817/818/857/897 usam protocolo binário e **não** são suportados pelo tipo "Yaesu"; use o Hamlib (rigctld).
 - Os backends seriais (Icom/Kenwood/Yaesu) foram testados contra rádios **simulados**;
   se o seu modelo reagir diferente, use o rigctld e abra uma issue.
 

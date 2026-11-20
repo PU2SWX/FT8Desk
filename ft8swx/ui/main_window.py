@@ -8,7 +8,7 @@ import traceback
 
 import numpy as np
 from PySide6.QtCore import QThread, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QFont
+from PySide6.QtGui import QAction, QActionGroup, QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView, QCheckBox, QDialog, QDoubleSpinBox, QFrame, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
@@ -26,6 +26,7 @@ from ..cat import CatController, CatError, CatPtt
 from ..clock import SlotClock
 from ..config import BANDS, Settings
 from ..grid import compass_point, distance_bearing
+from ..levels import FLOOR_DB, LevelMeter, block_levels, tx_envelope
 from ..native import Decoder
 from ..parse import parse_message
 from ..ptt import PttController, PttError
@@ -33,9 +34,10 @@ from ..qso import Phase, QsoEngine, fmt_report
 from ..schedule import next_tx_slot, parity_name, tx_parity_for
 from ..waterfall_model import WaterfallModel
 from .export_dialog import ExportDialog
+from .level_bar import LevelBar
 from .map_view import MapPanel, MapWindow
 from .settings_dialog import SettingsDialog
-from .theme import C, stylesheet
+from .theme import C, THEMES, set_theme, stylesheet
 from .waterfall import CompassWidget, SlotBar, SpectrumWidget, WaterfallWidget
 
 SHORT_BANDS = ["160m", "80m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"]
@@ -138,6 +140,11 @@ class MainWindow(QMainWindow):
         self._grid_cache: dict[str, str] = {}   # indicativo -> ultimo grid visto
         self._pending_log = False               # loga so' depois de transmitir
         self._cat_hold_until = 0.0              # ignora leitura do VFO logo apos sintonizar
+        self.rx_meter, self.tx_meter = LevelMeter(), LevelMeter()
+        self._tx_env: list | None = None
+        self._tx_t0 = 0.0
+        self._inline: list = []                 # (widget, funcao->css) refeitos ao trocar o tema
+        set_theme(settings.theme)
         self._map_win: MapWindow | None = None
 
         self._build_ui()
@@ -241,6 +248,19 @@ class MainWindow(QMainWindow):
         act_folder.triggered.connect(self._open_log_folder)
         menu_log.addAction(act_folder)
 
+        menu_view = self.menuBar().addMenu("E&xibir")
+        menu_tema = menu_view.addMenu("Tema")
+        self._theme_group = QActionGroup(self)
+        self._theme_acts: dict[str, QAction] = {}
+        for name, (label, _) in THEMES.items():
+            a = QAction(label, self)
+            a.setCheckable(True)
+            a.setChecked(name == self.s.theme)
+            a.triggered.connect(lambda _=False, n=name: self._pick_theme(n))
+            self._theme_group.addAction(a)
+            menu_tema.addAction(a)
+            self._theme_acts[name] = a
+
         menu.addSeparator()
         act_quit = QAction("Sair", self)
         act_quit.triggered.connect(self.close)
@@ -275,7 +295,7 @@ class MainWindow(QMainWindow):
 
         sep = QFrame()
         sep.setFrameShape(QFrame.Shape.VLine)
-        sep.setStyleSheet(f"color: {C['border2']};")
+        self._sty(sep, lambda: f"color: {C['border2']};")
         row1.addWidget(sep)
 
         bands = QHBoxLayout()
@@ -322,7 +342,7 @@ class MainWindow(QMainWindow):
         row2.addLayout(dial_box)
 
         mhz_lbl = QLabel("MHz")
-        mhz_lbl.setStyleSheet(f"color:{C['text_faint']}; padding-top:16px;")
+        self._sty(mhz_lbl, lambda: f"color:{C['text_faint']}; padding-top:16px;")
         row2.addWidget(mhz_lbl, 0, Qt.AlignmentFlag.AlignTop)
 
         tx_box = QVBoxLayout()
@@ -358,6 +378,20 @@ class MainWindow(QMainWindow):
         self.ed_grid.editingFinished.connect(self._callsign_changed)
         grid_box.addWidget(self.ed_grid)
         row2.addLayout(grid_box)
+
+        row2.addSpacing(16)
+        lv_box = QVBoxLayout()
+        lv_box.setSpacing(2)
+        lv_box.addWidget(self._field_label("nivel de audio (dBFS)"))
+        self.bar_rx = LevelBar("RX", -45.0, -15.0,
+            "Entrada (receptor). Verde = bom (-45 a -15 dBFS). Ambar = fraco ou alto demais.\n"
+            "LED vermelho = saturando: reduza o volume do radio/placa. Faixas indicativas.")
+        self.bar_tx = LevelBar("TX", -40.0, -3.0,
+            "Saida (transmissao). O ganho de TX fica em Configuracoes > Audio. "
+            "Nao deve saturar nem causar ALC no radio.")
+        lv_box.addWidget(self.bar_rx)
+        lv_box.addWidget(self.bar_tx)
+        row2.addLayout(lv_box)
 
         row2.addStretch(1)
         self.chip_mode = self._chip(self.s.mode)
@@ -397,7 +431,7 @@ class MainWindow(QMainWindow):
 
         bar = QHBoxLayout()
         self.lbl_log_count = QLabel("0 QSOs")
-        self.lbl_log_count.setStyleSheet(f"color:{C['text_dim']};")
+        self._sty(self.lbl_log_count, lambda: f"color:{C['text_dim']};")
         self.bt_export = QPushButton("Exportar ADIF...")
         self.bt_export.setObjectName("Primary")
         self.bt_export.setToolTip("Gerar arquivo ADIF para subir no QRZ / LoTW")
@@ -455,7 +489,7 @@ class MainWindow(QMainWindow):
         left.addWidget(self.lbl_qso_state)
         left.addWidget(self.lbl_qso_dx)
         self.lbl_qso_meta = QLabel("")
-        self.lbl_qso_meta.setStyleSheet(f"color:{C['text_dim']};")
+        self._sty(self.lbl_qso_meta, lambda: f"color:{C['text_dim']};")
         left.addWidget(self.lbl_qso_meta)
         left.addStretch(1)
         top.addLayout(left, 1)
@@ -465,8 +499,8 @@ class MainWindow(QMainWindow):
 
         self.lbl_qso_info = QLabel("-")
         self.lbl_qso_info.setWordWrap(True)
-        self.lbl_qso_info.setStyleSheet(
-            f"color:{C['text_dim']}; font-family:'Consolas'; font-size:11px;")
+        self._sty(self.lbl_qso_info,
+                  lambda: f"color:{C['text_dim']}; font-family:'Consolas'; font-size:11px;")
         v.addWidget(self.lbl_qso_info)
         v.addStretch(1)
         return w
@@ -567,14 +601,20 @@ class MainWindow(QMainWindow):
         if self._tx_job and self._tx_job.isRunning():
             self._tx_job.cancel()
             self._tx_job.wait(1500)
+        # a thread de decode usa memoria nativa do decoder: ela precisa terminar ANTES do close()
+        job = self._decode_job
+        decode_done = True
+        if job is not None and job.isRunning():
+            decode_done = job.wait(8000)
         self.audio.close()
         self.ptt.close()
         self.cat.close()
-        try:
-            self.decoder.close()
-            self.encoder.close()
-        except Exception:
-            pass
+        if decode_done:
+            try:
+                self.decoder.close()
+                self.encoder.close()
+            except Exception:
+                pass
         super().closeEvent(ev)
 
     def _set_chip(self, label: QLabel, text: str, name: str = "Chip") -> None:
@@ -607,7 +647,21 @@ class MainWindow(QMainWindow):
     # ==================================================================
     # loop principal
     # ==================================================================
+    def _update_meters(self) -> None:
+        now = time.monotonic()
+        if self.rx_meter._t is None or now - self.rx_meter._t > 0.25:
+            self.rx_meter.decay(now)                  # sem audio chegando: a barra cai
+        self.bar_rx.set_state(self.rx_meter.level, self.rx_meter.peak, self.rx_meter.clip(now))
+        env = self._tx_env
+        idx = int((now - self._tx_t0) / 0.05) if env else -1
+        if env and 0 <= idx < len(env):
+            self.tx_meter.push(*env[idx], now)
+        else:
+            self.tx_meter.decay(now)
+        self.bar_tx.set_state(self.tx_meter.level, self.tx_meter.peak, self.tx_meter.clip(now))
+
     def _on_tick(self) -> None:
+        self._update_meters()
         utc = self.clock.utc_string()
         self.lbl_utc.setText(utc)
         self.lbl_clock.setText(utc)
@@ -642,7 +696,9 @@ class MainWindow(QMainWindow):
             return
         total = sum(b.size for b in blocks)
         t = self.clock.now() - total / float(self.s.input_rate)
+        now = time.monotonic()
         for b in blocks:
+            self.rx_meter.push(*block_levels(b), now)
             t += b.size / float(self.s.input_rate)
             x = resample(b, self.s.input_rate, FT8_RATE)
             self.model.add_audio(x)
@@ -687,24 +743,25 @@ class MainWindow(QMainWindow):
                 if c == 4:
                     item.setData(Qt.ItemDataRole.UserRole, text)
                 item.setData(Qt.ItemDataRole.UserRole + 1, slot_idx)
-                color = None
+                ckey = None
                 if c == 4:
                     if p.is_cq:
-                        color = QColor(C["accent"])
+                        ckey = "accent"
                     elif p.call_to and p.call_to.upper() == self.s.my_call:
-                        color = QColor(C["blue"])
+                        ckey = "blue"
                     elif p.token in ("73", "RR73"):
-                        color = QColor(C["text_faint"])
+                        ckey = "text_faint"
                     elif p.call_from.upper() in worked:
-                        color = QColor(C["text_dim"])
+                        ckey = "text_dim"
                 elif c == 1:
-                    color = (QColor(C["accent"]) if r.snr > -6
-                             else QColor(C["amber"]) if r.snr > -16
-                             else QColor(C["text_faint"]))
-                if color is not None:
-                    item.setForeground(color)
+                    ckey = ("accent" if r.snr > -6
+                            else "amber" if r.snr > -16 else "text_faint")
+                if ckey is not None:
+                    item.setForeground(QColor(C[ckey]))
+                    item.setData(Qt.ItemDataRole.UserRole + 2, ckey)
                 if p.call_to and p.call_to.upper() == self.s.my_call:
-                    item.setBackground(QColor(27, 50, 66, 120))
+                    item.setBackground(QColor(C["row_me"]))
+                    item.setData(Qt.ItemDataRole.UserRole + 3, True)
                 self.tbl.setItem(row, c, item)
 
             if p.call_from and not p.is_cq:
@@ -857,12 +914,18 @@ class MainWindow(QMainWindow):
         job.start()
 
     def _on_tx_started(self, _: str) -> None:
+        self.cat.paused = True          # RF no ar: nada de polling CAT durante o TX
+        if self._tx_job is not None:
+            self._tx_env = tx_envelope(self._tx_job.wave, self.audio.cfg.tx_gain)
+            self._tx_t0 = time.monotonic()
         self._set_chip(self.lbl_ptt, "PTT TX", "ChipTx")
         self.lbl_qso_state.setStyleSheet(f"color:{C['red']}; letter-spacing:2px;")
         self._refresh_tx_seq()
 
     def _on_tx_finished(self, ok: bool, err: str) -> None:
         self._tx_busy = False
+        self.cat.paused = False
+        self._tx_env = None
         self._set_chip(self.lbl_ptt, *self._ptt_idle_label())
         self.lbl_qso_state.setStyleSheet(f"color:{C['accent']}; letter-spacing:2px;")
         if not ok and err:
@@ -1321,6 +1384,52 @@ class MainWindow(QMainWindow):
         self._map_win.raise_()
         self._map_win.activateWindow()
 
+    # ==================================================================
+    # tema
+    # ==================================================================
+    def _sty(self, widget, fn) -> None:
+        widget.setStyleSheet(fn())
+        self._inline.append((widget, fn))
+
+    def _pick_theme(self, name: str) -> None:
+        self.s.theme = name
+        try:
+            self.s.save()
+        except OSError:
+            pass
+        self._apply_theme()
+
+    def _apply_theme(self) -> None:
+        self.s.theme = set_theme(self.s.theme)
+        css = stylesheet()
+        from PySide6.QtWidgets import QApplication
+
+        QApplication.instance().setStyleSheet(css)
+        self.setStyleSheet(css)
+        for w, fn in self._inline:
+            w.setStyleSheet(fn())
+        self.lbl_qso_state.setStyleSheet(
+            f"color:{C['red' if self._tx_busy else 'accent']}; letter-spacing:2px;")
+        for r in range(self.tbl.rowCount()):             # recolore decodes ja listados
+            for c in range(self.tbl.columnCount()):
+                it = self.tbl.item(r, c)
+                if it is None:
+                    continue
+                key = it.data(Qt.ItemDataRole.UserRole + 2)
+                if key:
+                    it.setForeground(QColor(C[key]))
+                if it.data(Qt.ItemDataRole.UserRole + 3):
+                    it.setBackground(QColor(C["row_me"]))
+        self._load_log_table()
+        if hasattr(self, "map_panel"):
+            self.map_panel.restyle()
+            if self._map_win is not None:
+                self._map_win.panel.restyle()
+        for w in self.findChildren(QWidget):
+            w.update()
+        if self.s.theme in getattr(self, "_theme_acts", {}):
+            self._theme_acts[self.s.theme].setChecked(True)
+
     def _open_settings(self) -> None:
         dlg = SettingsDialog(self.s, self)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.result_settings:
@@ -1335,7 +1444,7 @@ class MainWindow(QMainWindow):
             self.cat = CatController(self.s.cat)
             self.ptt = self._make_ptt()
             self._open_rig()
-            self._refresh_map()
+            self._apply_theme()
             self.audio.cfg.tx_gain = self.s.tx_gain
             self._refresh_band_buttons()
             self._sync_auto_button()

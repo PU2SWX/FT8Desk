@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
 from ..audio import list_devices
 from ..cat import BACKENDS, CatConfig, CatController, CatError
 from ..config import Settings
+from .theme import C, THEMES
 from ..ptt import PttController, PttError, list_serial_ports
 
 
@@ -54,6 +55,11 @@ class SettingsDialog(QDialog):
         row.addWidget(self.ed_log)
         row.addWidget(self.bt_log)
         f.addRow("Indicativo:", self.ed_call)
+        self.cb_theme = QComboBox()
+        for key, (label, _) in THEMES.items():
+            self.cb_theme.addItem(label, key)
+        self.cb_theme.setCurrentIndex(max(0, self.cb_theme.findData(self.s.theme)))
+        f.addRow("Tema:", self.cb_theme)
         f.addRow("Grid locator:", self.ed_grid)
         f.addRow("Arquivo de log (ADIF):", row)
         return w
@@ -145,7 +151,7 @@ class SettingsDialog(QDialog):
             "o radio deve entrar em TX enquanto o botao estiver pressionado."
         )
         hint.setWordWrap(True)
-        hint.setStyleSheet("color:#9aa4b8;")
+        hint.setStyleSheet(f"color:{C['text_dim']};")
 
         self.bt_test = QPushButton("Testar PTT (1 s)")
         self.bt_test.clicked.connect(self._test_ptt)
@@ -205,9 +211,14 @@ class SettingsDialog(QDialog):
 
         self.chk_cat_mode = QCheckBox("Colocar o radio em USB-DATA ao trocar de banda")
         self.chk_cat_mode.setChecked(c.set_mode)
+        self.chk_cat_rts = QCheckBox("Manter RTS ligado na porta CAT (Yaesu: se o menu 'CAT RTS' estiver ENABLE)")
+        self.chk_cat_rts.setChecked(c.rts_high)
+        self.chk_cat_rts.setToolTip("Alguns radios so respondem com RTS alto. NAO marque em radios "
+                                    "cujo RTS chaveia o PTT (ex.: IC-7300 com USB SEND = RTS).")
         self.chk_cat_ptt = QCheckBox("Usar CAT para PTT (em vez de DTR/RTS)")
         self.chk_cat_ptt.setChecked(c.ptt_via_cat)
         v.addWidget(self.chk_cat_mode)
+        v.addWidget(self.chk_cat_rts)
         v.addWidget(self.chk_cat_ptt)
 
         hint = QLabel(
@@ -217,7 +228,7 @@ class SettingsDialog(QDialog):
             "\"Usar CAT para PTT\": uma porta serial nao pode ser aberta duas vezes. "
             "Para qualquer radio fora da lista, use o Hamlib (rigctld).")
         hint.setWordWrap(True)
-        hint.setStyleSheet("color:#9aa4b8;")
+        hint.setStyleSheet(f"color:{C['text_dim']};")
         self.bt_cat_test = QPushButton("Testar CAT (ler frequencia)")
         self.bt_cat_test.clicked.connect(self._test_cat)
         v.addWidget(hint)
@@ -250,6 +261,7 @@ class SettingsDialog(QDialog):
             civ_addr=addr,
             set_mode=self.chk_cat_mode.isChecked(),
             ptt_via_cat=self.chk_cat_ptt.isChecked(),
+            rts_high=self.chk_cat_rts.isChecked(),
             poll_s=self.s.cat.poll_s,
         )
 
@@ -348,6 +360,11 @@ class SettingsDialog(QDialog):
 
     def _test_ptt(self) -> None:
         cfg = self._collect_ptt()
+        # a janela principal ja mantem a porta aberta; so uma abertura por porta no Windows
+        live = getattr(self.parent(), "ptt", None)
+        was_live = bool(live is not None and type(live) is PttController and live.connected)
+        if was_live:
+            live.close()
         ctrl = PttController(cfg)
         try:
             ctrl.open()
@@ -359,6 +376,11 @@ class SettingsDialog(QDialog):
             QMessageBox.warning(self, "PTT", str(exc))
         finally:
             ctrl.close()
+            if was_live:
+                try:
+                    live.open()
+                except PttError:
+                    pass
 
     def _collect_ptt(self):
         from ..ptt import PttConfig
@@ -395,6 +417,7 @@ class SettingsDialog(QDialog):
         s.tx_gain = float(self.sp_gain.value())
         s.ptt = ptt
         s.cat = cat
+        s.theme = self.cb_theme.currentData() or "dark"
         s.tx_parity = self.cb_parity.currentData() or "auto"
         s.tx_offset_s = float(self.sp_offset.value())
         s.tx_report = int(self.sp_report.value())

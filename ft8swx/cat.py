@@ -11,6 +11,7 @@ Este modulo nao depende de Qt: a janela so le ``freq_hz`` e chama set_freq/set_p
 
 from __future__ import annotations
 
+import logging
 import socket
 import threading
 import time
@@ -23,6 +24,9 @@ try:
     import serial
 except Exception:  # pragma: no cover - pyserial ausente
     serial = None
+
+
+log = logging.getLogger("ft8swx.cat")
 
 
 class CatError(RuntimeError):
@@ -48,11 +52,22 @@ class CatConfig:
     civ_addr: int = 0x94           # Icom: IC-7300 = 0x94, IC-705 = 0xA4, IC-7610 = 0x98
     set_mode: bool = True          # coloca em USB-DATA ao sintonizar
     ptt_via_cat: bool = False      # PTT pelo comando CAT em vez de DTR/RTS
+    rts_high: bool = False         # mantem RTS ligado (handshake: menu 'CAT RTS' do Yaesu)
     poll_s: float = 1.0
 
     @property
     def uses_serial(self) -> bool:
         return self.backend != "rigctld"
+
+
+def _hex(data: bytes) -> str:
+    return " ".join(f"{b:02X}" for b in data[:24]) if data else "nada"
+
+
+def _where(link) -> str:
+    port = getattr(link, "port", "")
+    baud = getattr(link, "baud", "")
+    return f" em {port} a {baud} baud" if port else ""
 
 
 # ----------------------------------------------------------------------
@@ -65,9 +80,10 @@ class SerialLink:
     PTT/CW. Abrir a porta com as linhas ativas pode colocar o radio em TX.
     """
 
-    def __init__(self, port: str, baud: int):
+    def __init__(self, port: str, baud: int, rts_high: bool = False):
         self.port = port
         self.baud = baud
+        self.rts_high = rts_high
         self._ser = None
 
     def open(self) -> None:
@@ -82,12 +98,13 @@ class SerialLink:
             ser.timeout = 0.05
             ser.write_timeout = 1.0
             ser.dtr = False
-            ser.rts = False
+            ser.rts = bool(self.rts_high)
             if not self.port.upper().startswith("COM"):
                 ser.exclusive = True
             ser.open()
             self._ser = ser
         except Exception as exc:
+            log.error("falha ao abrir %s: %s", self.port, exc)
             raise CatError(f"Nao foi possivel abrir {self.port}: {exc}") from exc
 
     def close(self) -> None:
@@ -211,9 +228,10 @@ class RigctldBackend(_Backend):
 class IcomBackend(_Backend):
     CTRL = 0xE0
 
-    def __init__(self, port: str, baud: int, addr: int, link=None, timeout: float = 0.5):
+    def __init__(self, port: str, baud: int, addr: int, link=None, timeout: float = 0.5,
+                 rts_high: bool = False):
         self.addr = int(addr) & 0xFF
-        self.link = link or SerialLink(port, baud)
+        self.link = link or SerialLink(port, baud, rts_high)
         self.timeout = timeout
 
     def open(self) -> None:
@@ -269,7 +287,8 @@ class IcomBackend(_Backend):
                 # ignora o eco do nosso comando e mensagens "transceive" (dst 0x00)
                 if dst == self.CTRL and src == self.addr and want(payload):
                     return payload
-        raise CatError("Sem resposta do radio (CI-V). Confira porta, baud e endereco.")
+        raise CatError(f"Sem resposta do radio (CI-V){_where(self.link)}; "
+                       f"recebido: {_hex(buf)}. Confira porta, baud e endereco.")
 
     def _ack(self, cmd: bytes) -> None:
         p = self._txn(cmd, lambda x: x[:1] in (b"\xfb", b"\xfa"))
@@ -297,12 +316,13 @@ class IcomBackend(_Backend):
 class AsciiBackend(_Backend):
     """Kenwood (FA de 11 digitos) e Yaesu (FA de 9 digitos)."""
 
-    def __init__(self, style: str, port: str, baud: int, link=None, timeout: float = 0.4):
+    def __init__(self, style: str, port: str, baud: int, link=None, timeout: float = 0.4,
+                 rts_high: bool = False):
         if style not in ("kenwood", "yaesu"):
             raise ValueError(style)
         self.style = style
         self.digits = 11 if style == "kenwood" else 9
-        self.link = link or SerialLink(port, baud)
+        self.link = link or SerialLink(port, baud, rts_high)
         self.timeout = timeout
 
     def open(self) -> None:
@@ -328,7 +348,8 @@ class AsciiBackend(_Backend):
                     return float(r[2:])
                 if r == "?":
                     raise CatError("O radio nao reconheceu o comando FA; (estilo CAT errado?)")
-        raise CatError("Sem resposta do radio (CAT). Confira porta e baud.")
+        raise CatError(f"Sem resposta do radio (CAT){_where(self.link)}; "
+                       f"recebido: {_hex(buf)}. Confira porta, baud e o menu CAT RATE do radio.")
 
     def set_freq(self, hz: float) -> None:
         self._send(f"FA{int(round(hz)):0{self.digits}d};")
@@ -351,9 +372,9 @@ def make_backend(cfg: CatConfig) -> _Backend:
     if cfg.backend == "rigctld":
         return RigctldBackend(cfg.host, int(cfg.tcp_port))
     if cfg.backend == "icom":
-        return IcomBackend(cfg.port, int(cfg.baud), int(cfg.civ_addr))
+        return IcomBackend(cfg.port, int(cfg.baud), int(cfg.civ_addr), rts_high=cfg.rts_high)
     if cfg.backend in ("kenwood", "yaesu"):
-        return AsciiBackend(cfg.backend, cfg.port, int(cfg.baud))
+        return AsciiBackend(cfg.backend, cfg.port, int(cfg.baud), rts_high=cfg.rts_high)
     raise CatError(f"Backend CAT desconhecido: {cfg.backend}")
 
 
@@ -371,6 +392,7 @@ class CatController:
         self.freq_stamp = 0              # incrementa a cada leitura valida
         self.last_error = ""
         self.keyed = False
+        self.paused = False              # True durante o TX: sem trafego CAT com RF no ar
         self._fails = 0
 
     @property
@@ -386,7 +408,14 @@ class CatController:
             return
         with self._lock:
             be = self._be or make_backend(self.cfg)
-            be.open()                    # CatError sobe para a interface
+            try:
+                be.open()                # CatError sobe para a interface
+            except CatError as exc:
+                log.error("CAT nao abriu: %s", exc)
+                raise
+            log.info("CAT aberto (%s, %s, %s baud, RTS %s)", self.cfg.backend,
+                     self.cfg.port or f"{self.cfg.host}:{self.cfg.tcp_port}", self.cfg.baud,
+                     "alto" if self.cfg.rts_high else "baixo")
             self._be = be
         self._stop.clear()
         self._fails = 0
@@ -414,12 +443,14 @@ class CatController:
     def _poll(self) -> None:
         interval = max(0.25, float(self.cfg.poll_s))
         while not self._stop.is_set():
-            if not self.keyed:
+            if not self.keyed and not self.paused:
                 try:
                     with self._lock:
                         be = self._be
                         hz = be.get_freq() if be is not None else None
                     if hz is not None:
+                        if self._fails >= 3:
+                            log.info("CAT voltou a responder")
                         self.freq_hz = hz
                         self.freq_stamp += 1
                         self._fails = 0
@@ -427,6 +458,8 @@ class CatController:
                 except CatError as exc:
                     self._fails += 1
                     self.last_error = str(exc)
+                    if self._fails == 3:
+                        log.warning("CAT sem resposta: %s", exc)
                 except Exception as exc:  # pragma: no cover
                     self._fails += 1
                     self.last_error = str(exc)
@@ -459,6 +492,7 @@ class CatController:
                 self.keyed = False
             raise
         self.keyed = bool(on)
+        log.info("CAT PTT %s", "ON" if on else "OFF")
 
 
 class CatPtt(PttController):
@@ -487,8 +521,10 @@ class CatPtt(PttController):
                 pass
             raise PttError(f"CAT: {exc}") from exc
         self._keyed = True
+        self._arm_wd()
 
     def unkey(self) -> None:
+        self._disarm_wd()
         try:
             self.cat.set_ptt(False)
         except CatError as exc:

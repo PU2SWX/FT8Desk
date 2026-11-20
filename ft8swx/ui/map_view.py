@@ -19,7 +19,7 @@ from ..mapdata import (
     PERIODS, Link, build_links, great_circle, load_world, since_for_days, summarize,
     valid_grid,
 )
-from .theme import C
+from .theme import C, fade
 
 # faixas de distancia -> cor
 DIST_STEPS = [(1000.0, C["accent"]), (5000.0, C["blue"]), (10000.0, C["amber"])]
@@ -126,7 +126,7 @@ class MapWidget(QWidget):
     def paintEvent(self, ev) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-        p.fillRect(self.rect(), QColor(C["bg"]))
+        p.fillRect(self.rect(), QColor(C["map_sea"]))
 
         world = QTransform()
         world.translate(self.width() / 2, self.height() / 2)
@@ -136,7 +136,7 @@ class MapWidget(QWidget):
         # fundo: continentes e grade
         p.save()
         p.setTransform(world)
-        land_pen = QPen(QColor(C["border2"]), 1)
+        land_pen = QPen(QColor(C["map_coast"]), 1)
         land_pen.setCosmetic(True)
         grid_pen = QPen(QColor(C["border"]), 1, Qt.PenStyle.DotLine)
         grid_pen.setCosmetic(True)
@@ -149,7 +149,7 @@ class MapWidget(QWidget):
                 for lat in range(-60, 61, 30):
                     p.drawLine(QPointF(-540, -lat), QPointF(540, -lat))
             p.setPen(land_pen)
-            p.setBrush(QColor(C["panel3"]))
+            p.setBrush(QColor(C["map_land"]))
             p.translate(off, 0)
             for poly in self._world:
                 p.drawPolygon(poly)
@@ -206,7 +206,7 @@ class MapWidget(QWidget):
                     r = QRectF(pt.x() + 7, pt.y() - fm.height() / 2 - 1,
                                fm.horizontalAdvance(text) + 8, fm.height() + 2)
                     p.setPen(Qt.PenStyle.NoPen)
-                    p.setBrush(QColor(11, 14, 19, 200))
+                    p.setBrush(fade("bg", 215))
                     p.drawRoundedRect(r, 3, 3)
                     p.setPen(QColor(C["text"]))
                     p.drawText(r, Qt.AlignmentFlag.AlignCenter, text)
@@ -216,11 +216,11 @@ class MapWidget(QWidget):
             pt = self._to_screen(self._me[1], self._me[0], k)
             if not (-40 <= pt.x() <= self.width() + 40):
                 continue
-            p.setPen(QPen(QColor("#ffffff"), 2))
+            p.setPen(QPen(QColor(C["text"]), 2))
             p.setBrush(QColor(C["violet"]))
             p.drawEllipse(pt, 6.0, 6.0)
             if self._me_call:
-                p.setPen(QColor("#ffffff"))
+                p.setPen(QColor(C["text"]))
                 p.drawText(QPointF(pt.x() + 9, pt.y() - 8), self._me_call)
 
     def _paint_legend(self, p: QPainter) -> None:
@@ -376,6 +376,11 @@ class MapPanel(QWidget):
         self.bt_save.clicked.connect(self._save_image)
         self.tbl.itemSelectionChanged.connect(self._row_selected)
         self.map.stationClicked.connect(self._select_call)
+
+    def restyle(self) -> None:
+        self.lbl_stats.setStyleSheet(f"color:{C['text_dim']};")
+        self.map.update()
+        self._fill_table(self._links)
 
     # -- dados ---------------------------------------------------------
     def _filter_changed(self) -> None:

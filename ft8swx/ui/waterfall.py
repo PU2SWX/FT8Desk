@@ -10,7 +10,7 @@ from PySide6.QtGui import QColor, QFont, QImage, QLinearGradient, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from ..waterfall_model import WaterfallModel
-from .theme import C, FONT_MONO
+from .theme import C, DARK, FONT_MONO, fade
 
 SECONDS_PER_COLUMN = 0.05  # hop do WaterfallModel
 
@@ -101,7 +101,7 @@ class WaterfallWidget(QWidget):
     # -- desenho -------------------------------------------------------
     def paintEvent(self, ev) -> None:  # noqa: N802
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(C["bg"]))
+        p.fillRect(self.rect(), QColor(DARK["bg"]))
         r = self._plot_rect()
 
         if self.model is not None and self.model.data.any():
@@ -112,7 +112,7 @@ class WaterfallWidget(QWidget):
             img = QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888)
             p.drawImage(r, img)
         else:
-            p.setPen(QPen(QColor(C["text_faint"])))
+            p.setPen(QPen(QColor(DARK["text_faint"])))
             p.setFont(_mono(11))
             p.drawText(r, Qt.AlignmentFlag.AlignCenter,
                        "aguardando audio do receptor")
@@ -127,7 +127,7 @@ class WaterfallWidget(QWidget):
                 break
             p.setPen(QPen(QColor(255, 255, 255, 45), 1, Qt.PenStyle.DashLine))
             p.drawLine(r.left(), y, r.right(), y)
-            p.setPen(QPen(QColor(C["text_faint"])))
+            p.setPen(QPen(QColor(DARK["text_faint"])))
             p.drawText(4, y + 3, f"-{int(age)}s")
             k += 1
 
@@ -163,7 +163,7 @@ class WaterfallWidget(QWidget):
 
         # eixo de frequencia na base (compartilhado com o espectro)
         p.setBrush(Qt.BrushStyle.NoBrush)   # nao herdar o brush do marcador
-        p.setPen(QPen(QColor(C["border2"])))
+        p.setPen(QPen(QColor(DARK["border2"])))
         p.drawRect(r)
         p.setFont(_mono(9))
         step = 500 if (self.model and (self.model.f_max - self.model.f_min) > 1400) else 250
@@ -173,12 +173,12 @@ class WaterfallWidget(QWidget):
                 xx = int(self._freq_x(float(f)))
                 p.setPen(QPen(QColor(255, 255, 255, 40), 1))
                 p.drawLine(xx, r.bottom(), xx, r.bottom() - 5)
-                p.setPen(QPen(QColor(C["text_dim"])))
+                p.setPen(QPen(QColor(DARK["text_dim"])))
                 p.drawText(xx - 12, r.bottom() + 15, f"{f}")
                 f += step
 
         if self.decoding:
-            p.setPen(QPen(QColor(C["accent"])))
+            p.setPen(QPen(QColor(DARK["accent"])))
             p.setFont(_mono(9))
             p.drawText(r.left() + 4, r.bottom() - 6, "decodificando...")
         p.end()
@@ -225,7 +225,7 @@ class SpectrumWidget(QWidget):
 
     def paintEvent(self, ev) -> None:  # noqa: N802
         p = QPainter(self)
-        p.fillRect(self.rect(), QColor(C["panel"]))
+        p.fillRect(self.rect(), QColor(DARK["panel"]))
         if self.model is None or self.model.levels.size < 2:
             p.end()
             return
@@ -275,7 +275,7 @@ class SpectrumWidget(QWidget):
         p.drawText(int(min(xx + 4, r.right() - 54)), r.top() + 10,
                    f"{self.tx_freq:.0f} Hz")
 
-        p.setPen(QPen(QColor(C["border2"])))
+        p.setPen(QPen(QColor(DARK["border2"])))
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawRect(r)
         p.end()
@@ -329,7 +329,7 @@ class SlotBar(QWidget):
             p.drawRect(QRect(r.left(), r.top(), min(w, 2), r.height()))
 
         # marcas de 5 s
-        p.setPen(QPen(QColor(255, 255, 255, 28), 1))
+        p.setPen(QPen(fade("text", 28), 1))
         t = 5.0
         while t < slot:
             x = r.left() + int(t / slot * r.width())

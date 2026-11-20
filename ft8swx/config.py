@@ -61,6 +61,7 @@ class Settings:
     tx_offset_hz: float = 1500.0
     tx_offset_s: float = 0.5          # inicio da transmissao dentro do slot
     tx_report: int = -10
+    theme: str = "dark"            # dark | light | dial | paper
     tx_parity: str = "auto"           # auto | even | odd
     auto_seq: bool = True             # responder automaticamente
     auto_cq: bool = False             # repetir CQ sozinho ao terminar um QSO

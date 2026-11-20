@@ -32,6 +32,8 @@ def list_devices() -> list[dict]:
     out = []
     try:
         for idx, d in enumerate(sd.query_devices()):
+            if "WDM-KS" in sd.query_hostapis(d["hostapi"])["name"]:
+                continue          # kernel streaming: fonte comum de travamentos
             out.append({
                 "index": idx,
                 "name": d["name"],

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ctypes
+import threading
 import platform
 import sys
 from pathlib import Path
@@ -156,8 +157,14 @@ def _declare(lib) -> None:
     ]
 
 
+# O shim guarda um ponteiro GLOBAL ('instancia ativa') usado pelos callbacks de hash de
+# indicativos: decode/encode de instancias diferentes, em threads diferentes, escreveriam
+# na tabela uma da outra. Serializamos as chamadas que passam por esses callbacks.
+_NATIVE_LOCK = threading.RLock()
+
+
 class Decoder:
-    """Decodificador de um slot (15 s para FT8)."""
+    """Decodificador de um slot (15 s para FT8). Thread-safe e seguro contra uso apos close()."""
 
     def __init__(self, f_min: float = 200.0, f_max: float = 3000.0,
                  sample_rate: int = SAMPLE_RATE, protocol: str = "FT8"):
@@ -172,15 +179,26 @@ class Decoder:
         self.max_blocks = self.lib.ft8d_blocks_max(self._ptr)
         self._buf = (ctypes.c_float * 65536)()
         self._results = (Result * 80)()
+        self._lock = threading.RLock()
 
     # -- ciclo de vida -------------------------------------------------
+    def _alive(self) -> None:
+        if not getattr(self, "_ptr", None):
+            raise RuntimeError("Decoder ja foi fechado")
+
     def reset(self) -> None:
-        self.lib.ft8d_reset(self._ptr)
+        with self._lock:
+            self._alive()
+            self.lib.ft8d_reset(self._ptr)
 
     def close(self) -> None:
-        if getattr(self, "_ptr", None):
-            self.lib.ft8d_destroy(self._ptr)
-            self._ptr = None
+        lock = getattr(self, "_lock", None)
+        if lock is None:
+            return
+        with lock:                        # espera qualquer chamada nativa em andamento
+            if getattr(self, "_ptr", None):
+                self.lib.ft8d_destroy(self._ptr)
+                self._ptr = None
 
     def __del__(self):
         try:
@@ -191,7 +209,9 @@ class Decoder:
     # -- alimentacao ---------------------------------------------------
     @property
     def blocks_ready(self) -> int:
-        return self.lib.ft8d_blocks_ready(self._ptr)
+        with self._lock:
+            self._alive()
+            return self.lib.ft8d_blocks_ready(self._ptr)
 
     def feed(self, samples) -> int:
         """Alimenta amostras float32; retorna nº de blocos produzidos."""
@@ -200,11 +220,15 @@ class Decoder:
         arr = np.ascontiguousarray(samples, dtype=np.float32)
         n = int(arr.size)
         ptr = arr.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
-        return self.lib.ft8d_feed(self._ptr, ptr, n)
+        with self._lock:
+            self._alive()
+            return self.lib.ft8d_feed(self._ptr, ptr, n)
 
     def decode(self) -> list[Result]:
-        n = self.lib.ft8d_decode(self._ptr, 80, self._results)
-        return [self._results[i] for i in range(n)]
+        with self._lock, _NATIVE_LOCK:
+            self._alive()
+            n = self.lib.ft8d_decode(self._ptr, 80, self._results)
+            return [self._results[i] for i in range(n)]
 
     # -- codificacao ---------------------------------------------------
     def encode(self, text: str, freq_hz: float = 1200.0,
@@ -215,9 +239,11 @@ class Decoder:
         sr = sample_rate or self.sample_rate
         max_out = self.lib.ft8d_tx_samples(sr, 0 if self.protocol == "FT4" else 1)
         out = (ctypes.c_float * max_out)()
-        n = self.lib.ft8d_encode_text(
-            self._ptr, text.encode("ascii", "replace"), float(freq_hz), sr, out, max_out
-        )
+        with self._lock, _NATIVE_LOCK:
+            self._alive()
+            n = self.lib.ft8d_encode_text(
+                self._ptr, text.encode("ascii", "replace"), float(freq_hz), sr, out, max_out
+            )
         if n < 0:
             raise ValueError(f"Mensagem nao codificavel (rc={n}): {text!r}")
         return np.frombuffer(bytes(out)[: n * 4], dtype=np.float32).copy()
@@ -225,9 +251,17 @@ class Decoder:
     def check_text(self, text: str) -> tuple[bool, str]:
         """Valida se o texto cabe em 77 bits. Retorna (ok, texto_normalizado)."""
         buf = ctypes.create_string_buffer(64)
-        rc = self.lib.ft8d_check_text(
-            self._ptr, text.encode("ascii", "replace"), buf, len(buf)
-        )
+        # chamada da interface (digitacao): nao trava a janela se um decode estiver rodando
+        if not _NATIVE_LOCK.acquire(timeout=0.25):
+            return True, text
+        try:
+            with self._lock:
+                self._alive()
+                rc = self.lib.ft8d_check_text(
+                    self._ptr, text.encode("ascii", "replace"), buf, len(buf)
+                )
+        finally:
+            _NATIVE_LOCK.release()
         return rc == 0, buf.value.decode("ascii", "replace")
 
 
