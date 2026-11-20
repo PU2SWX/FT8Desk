@@ -9,7 +9,7 @@ Aqui o foco é **FT8 muito bem feito** sobre o `ft8_lib` (o mesmo codec usado po
 metade dos projetos sérios de FT8), com o que importa no dia a dia: decodificar
 bem, chamar CQ, completar QSO, logar em ADIF e chavear o rádio sem dor de cabeça.
 
-<img width="1366" height="770" alt="ft8swx-v9" src="https://github.com/user-attachments/assets/855877da-0b78-4f93-98c5-143129160f9a" />
+<img width="1366" height="770" alt="ft8swx-v95" src="https://github.com/user-attachments/assets/d56dcef1-7905-4aa5-bac4-9597aded786f" />
 ---
 
 > **0.9.5** — corrige crash (heap corruption) ao fechar durante um decode: o app espera a thread de decode e o `Decoder` ficou thread-safe; `crash.log` para falhas nativas; WDM-KS some da lista de áudio.
