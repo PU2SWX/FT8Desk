@@ -19,6 +19,7 @@ from __future__ import annotations
 import io
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -69,7 +70,20 @@ def fetch() -> None:
     if (SRC_DIR / "include" / "portaudio.h").exists():
         return
     print(f"Baixando PortAudio v{VERSION}...")
-    data = urllib.request.urlopen(URL, timeout=60).read()
+    try:
+        data = urllib.request.urlopen(URL, timeout=60).read()
+    except urllib.error.URLError as exc:
+        # Python no Windows costuma falhar com CERTIFICATE_VERIFY_FAILED (nao usa
+        # o repositorio de certificados do sistema). O curl.exe do Windows usa.
+        print(f"  urllib falhou ({exc.reason}); tentando com curl...")
+        try:
+            data = subprocess.run(["curl", "-fsSL", "--max-time", "120", URL],
+                                  check=True, capture_output=True).stdout
+        except (OSError, subprocess.CalledProcessError) as exc2:
+            raise SystemExit(
+                f"Nao foi possivel baixar a PortAudio: {exc2}\n"
+                f"Baixe manualmente {URL}\n"
+                f"e extraia em {SRC_DIR.parent}") from exc2
     SRC_DIR.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
         zf.extractall(SRC_DIR.parent)
