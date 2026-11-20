@@ -4,7 +4,6 @@ Estação **FT8 para desktop** (Windows 10/11, também roda em Linux/macOS), com
 **PTT por FTDI via DTR** — pensada para quem usa cabo caseiro, DigiRig, XGGComms
 ou interface com FT232 + transistor optoacoplador.
 
-Não é um clone do qFT8 (aquele app tem ~130 modos e decodificadores próprios).
 Aqui o foco é **FT8 muito bem feito** sobre o `ft8_lib` (o mesmo codec usado por
 metade dos projetos sérios de FT8), com o que importa no dia a dia: decodificar
 bem, chamar CQ, completar QSO, logar em ADIF e chavear o rádio sem dor de cabeça.
