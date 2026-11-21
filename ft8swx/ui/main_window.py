@@ -139,6 +139,7 @@ class MainWindow(QMainWindow):
         self._decodes: list = []
         self._grid_cache: dict[str, str] = {}   # indicativo -> ultimo grid visto
         self._pending_log = False               # loga so' depois de transmitir
+        self._pending_log_call = ""             # DX a que o log pendente se refere
         self._cat_hold_until = 0.0              # ignora leitura do VFO logo apos sintonizar
         self.rx_meter, self.tx_meter = LevelMeter(), LevelMeter()
         self._tx_env: list | None = None
@@ -686,6 +687,7 @@ class MainWindow(QMainWindow):
         if now - ref > 120.0:
             self.engine.abort("sem progresso")
             self.pending_tx = None
+            self._pending_log = False
             self.statusBar().showMessage(
                 "QSO sem progresso por 2 min - abandonado, AUTO retomado", 6000)
             self._refresh_tx_seq()
@@ -850,7 +852,15 @@ class MainWindow(QMainWindow):
         if action.tx_message:
             self._queue(action.tx_message)
         if action.log:
-            self._pending_log = True      # efetiva quando a transmissao concluir
+            if action.tx_message:
+                # efetiva quando a transmissao (RR73/73) concluir
+                self._pending_log = True
+                self._pending_log_call = self.engine.state.dx_call
+            else:
+                # nada a transmitir (ex.: 73 do DX): loga agora. Antes a flag
+                # ficava pendente e era consumida pelo fim do PROXIMO TX,
+                # registrando outra estacao como se fosse este QSO.
+                self._log_qso()
         if action.note:
             self.statusBar().showMessage(action.note, 4000)
 
@@ -945,7 +955,8 @@ class MainWindow(QMainWindow):
             return
         if self._pending_log:
             self._pending_log = False
-            self._log_qso()
+            if self.engine.state.dx_call == self._pending_log_call:
+                self._log_qso()
 
         # a maquina de estados decide se repete; RR73/73 nunca se repetem
         if self.engine.after_tx():
@@ -958,6 +969,7 @@ class MainWindow(QMainWindow):
         self.tx_enabled = on
         if not on:
             self.pending_tx = None
+            self._pending_log = False
             self._select_tx_slot(-1)
 
     def _halt_tx(self) -> None:
@@ -970,6 +982,7 @@ class MainWindow(QMainWindow):
         except PttError:
             pass
         self.engine.reset()
+        self._pending_log = False
         self._select_tx_slot(-1)
         self._set_chip(self.lbl_ptt, *self._ptt_idle_label())
         self.statusBar().showMessage("TX interrompido", 3000)
@@ -1131,7 +1144,10 @@ class MainWindow(QMainWindow):
 
     def _log_qso(self) -> None:
         st = self.engine.state
-        if not st.dx_call:
+        if not st.dx_call or st.logged:
+            return
+        if st.rx_report is None:
+            # rede de seguranca: sem relatorio recebido do DX nao houve QSO
             return
         grid = st.dx_grid or self._grid_cache.get(st.dx_call.upper(), "")
         rec = QsoRecord(
@@ -1140,7 +1156,7 @@ class MainWindow(QMainWindow):
             freq_mhz=float(self.s.dial_mhz),
             mode=self.s.mode,
             rst_sent=fmt_report(st.tx_report),
-            rst_rcvd=fmt_report(st.rx_report if st.rx_report is not None else 0),
+            rst_rcvd=fmt_report(st.rx_report),
             qso_date=time.strftime("%Y%m%d", time.gmtime(self.clock.now())),
             time_on=time.strftime("%H%M%S", time.gmtime(self.clock.now())),
             band=band_from_mhz(float(self.s.dial_mhz)),

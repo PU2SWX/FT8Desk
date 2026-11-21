@@ -69,6 +69,11 @@ def fmt_report(value: int) -> str:
     return f"{value:+03d}"
 
 
+def same_call(a: str, b: str) -> bool:
+    """Compara indicativos ignorando caixa e os <> de indicativos com hash."""
+    return bool(a) and a.strip("<>").upper() == b.strip("<>").upper()
+
+
 class QsoEngine:
     def __init__(self, my_call: str = "", my_grid: str = "", tx_report: int = -10,
                  max_repeats: int = 4):
@@ -78,6 +83,9 @@ class QsoEngine:
         self.max_repeats = max_repeats
         self.state = QsoState()
         self.worked_at: dict[str, float] = {}   # call -> instante da conclusao
+        self.last_final: dict[str, str] = {}    # call -> ultimo final enviado (RR73/73)
+        self.final_resends: dict[str, int] = {}  # call -> reenvios do final
+        self.max_final_resends = 3
 
     def mark_worked(self, call: str, now: float) -> None:
         if call:
@@ -156,6 +164,13 @@ class QsoEngine:
             return Action(note="sem indicativo configurado")
         p = parsed
 
+        # 0a) O outro lado repetiu a mensagem anterior ao nosso final: ele nao
+        #     copiou o RR73/73. Reenviamos o final em vez de ignorar (ou, pior,
+        #     reabrir o QSO) -- sem isso ele nunca loga e o QRZ nao confirma.
+        resend = self._maybe_resend_final(p, now)
+        if resend is not None:
+            return resend
+
         # 0) Ociosos e alguem nos chama direto -> entramos como chamador
         if st.phase in (Phase.IDLE, Phase.DONE) and p.call_to.upper() == me \
                 and p.call_from and (p.report is not None or p.grid):
@@ -167,6 +182,7 @@ class QsoEngine:
             rpt = int(round(snr)) if snr is not None else st.tx_report
             self.state = QsoState(phase=Phase.REPORT, role=ROLE_CALLER,
                                   dx_call=p.call_from.upper(), dx_grid=p.grid,
+                                  rx_report=p.report,
                                   tx_report=max(-24, min(20, rpt)), started_at=now)
             self.state.tx_message = (f"{self.state.dx_call} {me} "
                                      f"{fmt_report(self.state.tx_report)}")
@@ -174,9 +190,11 @@ class QsoEngine:
                           note=f"{p.call_from} chamou voce - respondendo")
 
         # 1) Alguem responde ao nosso CQ
-        if st.phase == Phase.CQ and p.call_to.upper() == me and p.call_from:
+        if st.phase == Phase.CQ and p.call_to.upper() == me and p.call_from \
+                and (p.report is not None or p.grid):
             st.dx_call = p.call_from.upper()
             st.dx_grid = p.grid
+            st.rx_report = p.report
             st.role = ROLE_CALLER
             st.started_at = now or st.started_at
             return self._send_report(st, snr, first_time=True)
@@ -184,8 +202,10 @@ class QsoEngine:
         if not st.active:
             return Action(note="QSO encerrado")
 
-        # 2) Mensagem de outra estacao que nao participa do QSO
-        if p.call_to.upper() != me and p.call_from.upper() != st.dx_call:
+        # 2) So interessa o que o DX do QSO diz PARA MIM. (Antes bastava uma das
+        #    duas condicoes: o RR73/R-xx que o DX mandava a OUTRA estacao era
+        #    tomado como resposta nossa e gerava um QSO falso no log.)
+        if not (same_call(p.call_from, st.dx_call) and same_call(p.call_to, me)):
             return Action(note="nao relacionado ao QSO atual")
 
         dx = st.dx_call
@@ -193,7 +213,9 @@ class QsoEngine:
         st.progress_at = now
         token = (p.token or "").upper()
 
-        # 3) Despedida do outro lado
+        # 3) Despedida do outro lado -- so vale se ele ja nos deu o relatorio
+        if token in ("73", "RR73", "RRR") and st.rx_report is None:
+            return Action(note=f"{token} de {dx} sem relatorio trocado: ignorado")
         if token == "73":
             # ele encerrou: nao ha o que transmitir
             st.phase = Phase.DONE
@@ -226,6 +248,35 @@ class QsoEngine:
         return Action()
 
     # -- helpers -------------------------------------------------------
+    def _maybe_resend_final(self, p: Parsed, now: float) -> Action | None:
+        """Reenvia RR73/73 se o DX repetiu a mensagem que o antecede.
+
+        Chamador (final RR73): o DX repete "R-xx".  Respondedor (final 73): o
+        DX repete "RR73".  So vale logo apos o QSO (janela de recently_worked)
+        e se nao estamos ocupados com outra estacao (CQ conta como livre).
+        """
+        call = p.call_from.upper().strip("<>")
+        final = self.last_final.get(call)
+        if not final or not same_call(p.call_to, self.my_call):
+            return None
+        st = self.state
+        if st.active and st.phase != Phase.CQ:
+            return None
+        if not self.recently_worked(call, now):
+            return None
+        if final == "RR73":
+            repeated = p.report is not None and self._has_r(p)
+        else:
+            repeated = (p.token or "").upper() in ("RR73", "RRR")
+        if not repeated:
+            return None
+        n = self.final_resends.get(call, 0)
+        if n >= self.max_final_resends:
+            return Action(note=f"{call}: limite de reenvios do {final} atingido")
+        self.final_resends[call] = n + 1
+        return Action(tx_message=f"{call} {self.my_call} {final}",
+                      note=f"{call} nao copiou o {final} - reenviando")
+
     @staticmethod
     def _has_r(p: Parsed) -> bool:
         return (p.token or "").upper() == "R" or any(
@@ -250,5 +301,7 @@ class QsoEngine:
         st.sent_final = True
         st.repeats = 0
         st.tx_message = f"{st.dx_call} {self.my_call} {token}"
+        self.last_final[st.dx_call.upper()] = token
+        self.final_resends[st.dx_call.upper()] = 0
         return Action(tx_message=st.tx_message, log=not st.logged,
                       note=f"QSO completo ({token})")

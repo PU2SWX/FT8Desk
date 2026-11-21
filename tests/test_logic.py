@@ -312,6 +312,70 @@ def test_auto():
     check(a.tx_message is None, "73 isolado nao abre QSO")
 
 
+def test_qso_falso_positivo():
+    """Regressao: QSO so vale com mensagens do DX dirigidas a mim e relatorio trocado."""
+    print("qso (DX fala com OUTRA estacao nao avanca nem loga)")
+    for msg in ("K1ABC W1AW RR73", "K1ABC W1AW R-10", "K1ABC W1AW 73"):
+        e = QsoEngine("PU2SWX", "GG66")
+        e.call("W1AW", "FN31", they_cq=True, now=100)
+        a = e.on_message(parse_message(msg), snr=-8, now=115)
+        check(a.tx_message is None and not a.log, f"ignora '{msg}'")
+
+    e = QsoEngine("PU2SWX", "GG66")
+    e.call("W1AW", "FN31", they_cq=True, now=100)
+    a = e.on_message(parse_message("CQ W1AW FN31"), snr=-8, now=115)
+    check(a.tx_message is None, "CQ do proprio DX nao avanca o QSO")
+
+    print("qso (RR73/73 sem relatorio trocado nao loga)")
+    e = QsoEngine("PU2SWX", "GG66")
+    e.call("W1AW", "FN31", they_cq=True, now=100)
+    a = e.on_message(parse_message("PU2SWX W1AW RR73"), now=115)
+    check(a.tx_message is None and not a.log, "RR73 sem relatorio e' ignorado")
+
+    print("qso (73 solto nao abre QSO em resposta ao CQ)")
+    e = QsoEngine("PU2SWX", "GG66")
+    e.start_cq(now=0)
+    a = e.on_message(parse_message("PU2SWX W1AW 73"), now=15)
+    check(a.tx_message is None and e.state.phase == Phase.CQ, "continua em CQ")
+
+    print("qso (reenvio do final quando o DX nao copiou)")
+    # chamador com auto_cq: depois do log volta para CQ
+    e = QsoEngine("PU2SWX", "GG66")
+    e.start_cq(now=0)
+    e.on_message(parse_message("PU2SWX W1AW FN31"), snr=-8, now=15)
+    a = e.on_message(parse_message("PU2SWX W1AW R-10"), snr=-8, now=45)
+    check(a.tx_message == "W1AW PU2SWX RR73" and a.log, "RR73 + log")
+    e.mark_worked("W1AW", 60)
+    e.start_cq(now=60)                                   # o que _log_qso faz
+    a = e.on_message(parse_message("PU2SWX W1AW R-10"), snr=-8, now=75)
+    check(a.tx_message == "W1AW PU2SWX RR73" and not a.log,
+          f"DX repete R-10 -> reenvia RR73 sem logar de novo: {a.tx_message}")
+    check(e.state.phase == Phase.CQ, "continua em CQ depois do reenvio")
+    for t in (105, 135):
+        a = e.on_message(parse_message("PU2SWX W1AW R-10"), snr=-8, now=t)
+    a = e.on_message(parse_message("PU2SWX W1AW R-10"), snr=-8, now=165)
+    check(a.tx_message is None, "limite de reenvios (3)")
+    a = e.on_message(parse_message("PU2SWX W1AW R-10"), snr=-8, now=1000)
+    check(a.tx_message != "W1AW PU2SWX RR73", "fora da janela de 5 min nao reenvia")
+
+    # respondedor: o DX repete RR73 -> reenvia 73
+    e = QsoEngine("PU2SWX", "GG66")
+    e.call("W1AW", "FN31", they_cq=True, now=100)
+    e.on_message(parse_message("PU2SWX W1AW -03"), snr=-3, now=115)
+    a = e.on_message(parse_message("PU2SWX W1AW RR73"), now=145)
+    check(a.tx_message == "W1AW PU2SWX 73" and a.log, "respondedor: 73 + log")
+    e.after_tx()
+    e.mark_worked("W1AW", 150)
+    a = e.on_message(parse_message("PU2SWX W1AW RR73"), now=175)
+    check(a.tx_message == "W1AW PU2SWX 73" and not a.log,
+          "respondedor: DX repete RR73 -> reenvia 73")
+
+    print("qso (relatorio na chamada direta e' guardado)")
+    e = QsoEngine("PU2SWX", "GG66")
+    a = e.on_message(parse_message("PU2SWX W1AW -12"), snr=-12, now=10, auto_reply=True)
+    check(e.state.rx_report == -12, "rx_report guardado na chamada direta")
+
+
 def test_dual_qso():
     """Duas estacoes completam um QSO trocando mensagens como no ar."""
     print("qso completo entre duas estacoes")
@@ -396,7 +460,8 @@ def test_schedule():
 
 if __name__ == "__main__":
     for fn in (test_parse, test_grid, test_qso, test_adif, test_collector,
-               test_resample, test_waterfall, test_schedule, test_auto, test_dual_qso):
+               test_resample, test_waterfall, test_schedule, test_auto, test_dual_qso,
+               test_qso_falso_positivo):
         fn()
     print()
     if fails:

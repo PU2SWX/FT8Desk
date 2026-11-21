@@ -11,7 +11,7 @@ bem, chamar CQ, completar QSO, logar em ADIF e chavear o rádio sem dor de cabe�
 <img width="1366" height="770" alt="ft8swx-v95" src="https://github.com/user-attachments/assets/d56dcef1-7905-4aa5-bac4-9597aded786f" />
 ---
 
-> **0.9.5** — corrige crash (heap corruption) ao fechar durante um decode: o app espera a thread de decode e o `Decoder` ficou thread-safe; `crash.log` para falhas nativas; WDM-KS some da lista de áudio.
+> **0.9.6** — corrige QSO falso no log: mensagens do DX para *outras* estações (RR73, R-xx, 73) não avançam mais o QSO, e só se loga com relatório recebido do DX; o log não vaza mais para a transmissão seguinte; reenvia RR73/73 (até 3×, em 5 min) quando o DX não copiou e repete a mensagem anterior; 73 solto não abre QSO em resposta ao CQ. **0.9.5** — corrige crash (heap corruption) ao fechar durante um decode: o app espera a thread de decode e o `Decoder` ficou thread-safe; `crash.log` para falhas nativas; WDM-KS some da lista de áudio.
 > **0.9.4** — barras de nível de áudio RX e TX no cabeçalho (RMS em dBFS, pico retido, LED de CLIP); rótulos sem "caixa" nos painéis.
 > **0.9.3** — temas: Escuro, Claro, Dial âmbar e Papel (QSL), em *Exibir → Tema* e em Configurações; troca ao vivo.
 > **0.9.2** — CAT: log com porta/baud, erro mostra o que o rádio devolveu, opção "Manter RTS ligado" (Yaesu com CAT RTS ENABLE).

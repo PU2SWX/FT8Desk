@@ -10,7 +10,7 @@ from pathlib import Path
 # ADIF 3.1.4. O QRZ Logbook exige CALL, QSO_DATE, BAND e MODE por registro.
 ADIF_VERSION = "3.1.4"
 PROGRAM_ID = "FT8SWX"
-PROGRAM_VERSION = "0.9.5"
+PROGRAM_VERSION = "0.9.6"
 
 # Estilos de MODE/SUBMODE aceitos por cada destino.
 #   "qrz"  -> MODE=FT8  (o que o QRZ Logbook e o WSJT-X usam)
